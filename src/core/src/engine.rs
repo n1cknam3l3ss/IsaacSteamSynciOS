@@ -74,6 +74,7 @@ pub struct StatusSnapshot {
     pub pending_choices: Vec<PendingChoice>,
     pub backup_count: usize,
     pub offline_play_allowed: bool,
+    pub excluded_slots: Vec<u8>,
 }
 
 impl Default for StatusSnapshot {
@@ -93,6 +94,7 @@ impl Default for StatusSnapshot {
             pending_choices: vec![],
             backup_count: 0,
             offline_play_allowed: true,
+            excluded_slots: vec![],
         }
     }
 }
@@ -171,10 +173,12 @@ impl Engine {
     }
 
     pub fn snapshot(&self) -> StatusSnapshot {
-        self.status
+        let mut snap = self.status
             .lock()
             .map(|value| value.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        snap.excluded_slots = crate::local::get_excluded_slots(&self.home).into_iter().collect();
+        snap
     }
 
     pub fn backups_json(&self) -> Result<String> {
@@ -465,6 +469,9 @@ impl Engine {
     }
 
     pub fn resolve_choice(self: &Arc<Self>, slot: u8, use_local: bool) -> bool {
+        if crate::local::get_excluded_slots(&self.home).contains(&slot) {
+            return false;
+        }
         self.spawn_operation("resolving", move |engine| async move {
             engine.ensure_session().await?;
             engine.force_slot(slot, use_local, true).await?;
@@ -476,10 +483,26 @@ impl Engine {
     }
 
     pub fn force(self: &Arc<Self>, slot: u8, use_local: bool) -> bool {
+        if crate::local::get_excluded_slots(&self.home).contains(&slot) {
+            return false;
+        }
         self.spawn_operation("forcing", move |engine| async move {
             engine.ensure_session().await?;
             engine.force_slot(slot, use_local, false).await
         })
+    }
+
+    pub fn set_slot_excluded(&self, slot: u8, excluded: bool) -> Result<()> {
+        crate::local::set_slot_excluded(&self.home, slot, excluded)?;
+        let excluded_slots: Vec<u8> = crate::local::get_excluded_slots(&self.home).into_iter().collect();
+        self.update_status(|status| {
+            status.excluded_slots = excluded_slots;
+        });
+        Ok(())
+    }
+
+    pub fn is_slot_excluded(&self, slot: u8) -> bool {
+        crate::local::get_excluded_slots(&self.home).contains(&slot)
     }
 
     pub fn restore_backup(self: &Arc<Self>, backup_id: String) -> bool {
@@ -816,6 +839,11 @@ impl Engine {
             .as_ref()
             .context("Steam session unavailable")?;
         let (change_number, remote) = cloud.list_isaac_saves(session).await?;
+        let excluded = crate::local::get_excluded_slots(&self.home);
+        let remote: Vec<_> = remote
+            .into_iter()
+            .filter(|file| !excluded.contains(&file.save.slot))
+            .collect();
         let local = if trigger == "prelaunch" {
             self.preflight_saves
                 .lock()
@@ -858,6 +886,7 @@ impl Engine {
             );
         }
         self.update_status(|status| {
+            status.excluded_slots = excluded.into_iter().collect();
             status.local_saves = local.iter().map(local_summary).collect();
             status.remote_saves = remote.iter().map(remote_summary).collect();
             status.detail = "Comparing local, Steam, and base hashes…".to_owned();
@@ -1127,6 +1156,9 @@ impl Engine {
     }
 
     async fn force_slot(&self, slot: u8, use_local: bool, must_be_pending: bool) -> Result<()> {
+        if crate::local::get_excluded_slots(&self.home).contains(&slot) {
+            bail!("save slot {slot} is excluded from sync");
+        }
         if must_be_pending
             && !self
                 .snapshot()

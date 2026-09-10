@@ -23,6 +23,8 @@ bool ICSCoreResolve(uint8_t slot, bool useLocal);
 bool ICSCoreForce(uint8_t slot, bool useLocal);
 bool ICSCoreRestoreBackup(const char *backupID);
 bool ICSCorePreflight(uint64_t timeoutMilliseconds);
+bool ICSCoreSetSlotExcluded(uint8_t slot, bool excluded);
+bool ICSCoreIsSlotExcluded(uint8_t slot);
 char *ICSCoreCopyStatusJSON(void);
 char *ICSCoreCopyBackupsJSON(void);
 void ICSCoreFreeString(char *value);

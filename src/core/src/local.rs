@@ -35,6 +35,60 @@ pub fn slot_for_filename(name: &str) -> Option<u8> {
     None
 }
 
+pub fn get_excluded_slots(home: &Path) -> BTreeSet<u8> {
+    let mut excluded = BTreeSet::new();
+    let candidates = [
+        home.join("Documents/exclude_slots.txt"),
+        home.join("Documents/Repentance/exclude_slots.txt"),
+        home.join("Documents/ignore_slots.txt"),
+        home.join("Documents/Repentance/ignore_slots.txt"),
+        home.join("Library/Application Support/IsaacCloudSync/exclude_slots.txt"),
+        home.join("Library/Application Support/IsaacCloudSync/state/excluded_slots.json"),
+    ];
+    for path in candidates {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(set) = serde_json::from_str::<BTreeSet<u8>>(&content) {
+                excluded.extend(set);
+            } else {
+                for token in content.split(|c: char| !c.is_ascii_digit()) {
+                    if let Ok(num) = token.parse::<u8>() {
+                        if (1..=3).contains(&num) {
+                            excluded.insert(num);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    excluded
+}
+
+pub fn set_slot_excluded(home: &Path, slot: u8, exclude: bool) -> Result<()> {
+    if !(1..=3).contains(&slot) {
+        bail!("invalid slot {slot}");
+    }
+    let mut current = get_excluded_slots(home);
+    if exclude {
+        current.insert(slot);
+    } else {
+        current.remove(&slot);
+    }
+    let config_dir = home.join("Library/Application Support/IsaacCloudSync");
+    let _ = fs::create_dir_all(&config_dir);
+    let path = config_dir.join("exclude_slots.txt");
+    let list_str = current
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    crate::atomic::write_bytes(&path, list_str.as_bytes())?;
+    let doc_dir = home.join("Documents");
+    if doc_dir.is_dir() {
+        let _ = crate::atomic::write_bytes(&doc_dir.join("exclude_slots.txt"), list_str.as_bytes());
+    }
+    Ok(())
+}
+
 pub fn discover_saves(home: &Path) -> Result<Vec<LocalSave>> {
     discover_saves_internal(home, None, true, false)
 }
@@ -67,6 +121,9 @@ pub fn locate_save_path_for_restore(
 ) -> Result<PathBuf> {
     if slot_for_filename(preferred_filename) != Some(slot) {
         bail!("backup filename does not match its save slot");
+    }
+    if get_excluded_slots(home).contains(&slot) {
+        bail!("slot {slot} is excluded from sync");
     }
     let roots = [home.join("Documents"), home.join("Library")];
     let mut candidates = Vec::new();
@@ -159,6 +216,19 @@ fn discover_saves_internal(
     retry_until_valid: bool,
     skip_invalid_candidates: bool,
 ) -> Result<Vec<LocalSave>> {
+    let excluded = get_excluded_slots(home);
+    let effective_allowed: Option<BTreeSet<u8>> = match allowed_slots {
+        Some(slots) => Some(slots.difference(&excluded).copied().collect()),
+        None => {
+            if excluded.is_empty() {
+                None
+            } else {
+                let all: BTreeSet<u8> = (1..=3).filter(|s| !excluded.contains(s)).collect();
+                Some(all)
+            }
+        }
+    };
+    let allowed_slots = effective_allowed.as_ref();
     let roots = [home.join("Documents"), home.join("Library")];
     // Decide the active DLC generation from filenames before parsing bytes.
     // Older Rebirth files may have a different valid magic/structure; parsing
@@ -532,4 +602,29 @@ mod tests {
         assert_eq!(found, live);
         let _ = fs::remove_dir_all(home);
     }
+
+    #[test]
+    fn excluded_slots_are_skipped_during_discovery() {
+        let home = std::env::temp_dir().join(format!("isaaccloud-exclude-{}", uuid::Uuid::new_v4()));
+        let documents = home.join("Documents/Repentance");
+        fs::create_dir_all(&documents).unwrap();
+        fs::write(documents.join("rep_persistentgamedata1.dat"), test_save(1)).unwrap();
+        fs::write(documents.join("rep_persistentgamedata3.dat"), test_save(3)).unwrap();
+
+        // Before exclusion: both slot 1 and 3 are found
+        let saves = discover_saves(&home).unwrap();
+        assert_eq!(saves.len(), 2);
+
+        // Exclude slot 3 via set_slot_excluded
+        set_slot_excluded(&home, 3, true).unwrap();
+        assert!(get_excluded_slots(&home).contains(&3));
+
+        // After exclusion: only slot 1 is found, slot 3 is skipped
+        let saves = discover_saves(&home).unwrap();
+        assert_eq!(saves.len(), 1);
+        assert_eq!(saves[0].slot, 1);
+
+        let _ = fs::remove_dir_all(home);
+    }
 }
+

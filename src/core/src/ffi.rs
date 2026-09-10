@@ -224,6 +224,16 @@ pub extern "C" fn ICSCoreCopyBackupsJSON() -> *mut c_char {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn ICSCoreSetSlotExcluded(slot: u8, excluded: bool) -> bool {
+    engine().is_some_and(|engine| engine.set_slot_excluded(slot, excluded).is_ok())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ICSCoreIsSlotExcluded(slot: u8) -> bool {
+    engine().is_some_and(|engine| engine.is_slot_excluded(slot))
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ICSCoreFreeString(value: *mut c_char) {
     if !value.is_null() {
         drop(unsafe { CString::from_raw(value) });

@@ -386,7 +386,7 @@ fn find_stats_node(root: &KVValue) -> Option<&KVValue> {
 fn collect_local_unlocks(home: &Path) -> Result<BTreeSet<u32>> {
     let saves = discover_saves(home)?;
     if saves.is_empty() {
-        bail!("no valid Isaac persistentgamedata save files were found");
+        return Ok(BTreeSet::new());
     }
 
     let mut unlocked = BTreeSet::new();

@@ -282,10 +282,19 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
 
     if (indexPath.section == 2) {
         NSUInteger slot = indexPath.row + 1;
-        NSDictionary *local = ICSFindSlot(self.status[@"local_saves"], slot);
-        NSDictionary *remote = ICSFindSlot(self.status[@"remote_saves"], slot);
-        cell.textLabel.text = [NSString stringWithFormat:@"Slot %lu\niPhone %@ • Steam %@",
-            (unsigned long)slot, ICSShortHash(local[@"sha256"]), ICSShortHash(remote[@"sha256"] ?: remote[@"steam_sha1"])];
+        NSArray *excludedSlots = [self.status[@"excluded_slots"] isKindOfClass:NSArray.class] ? self.status[@"excluded_slots"] : @[];
+        BOOL isExcluded = [excludedSlots containsObject:@(slot)];
+        if (isExcluded) {
+            cell.textLabel.text = [NSString stringWithFormat:@"Slot %lu [EXCLUDED / LOCAL ONLY]\nSync & achievements disabled (tap to configure)", (unsigned long)slot];
+            cell.textLabel.textColor = UIColor.secondaryLabelColor;
+        } else {
+            NSDictionary *local = ICSFindSlot(self.status[@"local_saves"], slot);
+            NSDictionary *remote = ICSFindSlot(self.status[@"remote_saves"], slot);
+            cell.textLabel.text = [NSString stringWithFormat:@"Slot %lu\niPhone %@ • Steam %@",
+                (unsigned long)slot, ICSShortHash(local[@"sha256"]), ICSShortHash(remote[@"sha256"] ?: remote[@"steam_sha1"])];
+            cell.textLabel.textColor = UIColor.labelColor;
+        }
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
 
@@ -342,6 +351,27 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         } else if ([action isEqualToString:@"Force Pull…"]) {
             [self chooseSlotForLocal:NO];
         }
+    } else if (indexPath.section == 2) {
+        NSUInteger slot = indexPath.row + 1;
+        NSArray *excludedSlots = [self.status[@"excluded_slots"] isKindOfClass:NSArray.class] ? self.status[@"excluded_slots"] : @[];
+        BOOL isExcluded = [excludedSlots containsObject:@(slot)];
+        NSString *title = [NSString stringWithFormat:@"Slot %lu Options", (unsigned long)slot];
+        NSString *message = isExcluded
+            ? @"This slot is currently excluded from Steam Cloud sync and Steam achievements. It remains strictly local on this iPhone."
+            : @"Steam Cloud sync and Steam achievements are currently active for this slot.";
+        UIAlertController *sheet = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleActionSheet];
+        NSString *toggleTitle = isExcluded
+            ? @"Enable Steam Cloud Sync"
+            : @"Exclude from Sync (Keep Local Only)";
+        [sheet addAction:[UIAlertAction actionWithTitle:toggleTitle style:isExcluded ? UIAlertActionStyleDefault : UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+            ICSCoreSetSlotExcluded((uint8_t)slot, !isExcluded);
+            [self refresh];
+        }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        UITableViewCell *selectedCell = [tableView cellForRowAtIndexPath:indexPath];
+        sheet.popoverPresentationController.sourceView = selectedCell;
+        sheet.popoverPresentationController.sourceRect = selectedCell.bounds;
+        [self presentViewController:sheet animated:YES completion:nil];
     } else if (indexPath.section == 3) {
         [self resolveChoice:self.status[@"pending_choices"][indexPath.row]];
     } else if (indexPath.section == 4) {
