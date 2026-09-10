@@ -99,15 +99,40 @@ impl SteamCloud {
                 request_name,
             });
         }
-        saves.sort_by_key(|file| file.save.slot);
-        for pair in saves.windows(2) {
-            if pair[0].save.slot == pair[1].save.slot {
-                bail!(
-                    "Steam contains multiple candidate files for save slot {}",
-                    pair[0].save.slot
-                );
+        fn remote_save_priority(filename: &str) -> u8 {
+            let lower = filename.to_ascii_lowercase();
+            if lower.contains("rep+persistentgamedata") {
+                3
+            } else if lower.contains("rep_persistentgamedata") {
+                2
+            } else {
+                1
             }
         }
+
+        let mut by_slot: std::collections::BTreeMap<u8, CloudFile> = std::collections::BTreeMap::new();
+        for file in saves {
+            let slot = file.save.slot;
+            match by_slot.get(&slot) {
+                Some(existing) => {
+                    let new_prio = remote_save_priority(&file.save.filename);
+                    let old_prio = remote_save_priority(&existing.save.filename);
+                    if new_prio > old_prio {
+                        by_slot.insert(slot, file);
+                    } else if new_prio == old_prio {
+                        let new_time = file.save.identity.modified_unix_ms.unwrap_or(0);
+                        let old_time = existing.save.identity.modified_unix_ms.unwrap_or(0);
+                        if new_time > old_time {
+                            by_slot.insert(slot, file);
+                        }
+                    }
+                }
+                None => {
+                    by_slot.insert(slot, file);
+                }
+            }
+        }
+        let saves: Vec<CloudFile> = by_slot.into_values().collect();
         Ok((response.current_change_number.unwrap_or(0), saves))
     }
 

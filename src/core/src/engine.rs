@@ -1,7 +1,7 @@
 use crate::{
     achievements, atomic,
     backups::BackupManager,
-    isaac_format::{SaveEncoding, canonical_identity_for_path, canonicalize_save},
+    isaac_format::{SaveEncoding, canonical_identity_for_path, canonicalize_save, convert_rep_plus_to_rep, convert_rep_to_rep_plus, is_rep_plus_save},
     keychain,
     local::{
         discover_saves, discover_saves_for_slots, discover_saves_immediate, identity_for_bytes,
@@ -907,9 +907,14 @@ impl Engine {
                     )));
                 }
             };
+            let normalized_remote_bytes = if is_rep_plus_save(&remote_canonical.bytes) {
+                convert_rep_plus_to_rep(&remote_canonical.bytes)?
+            } else {
+                remote_canonical.bytes.clone()
+            };
             let remote_needs_compatibility_repair =
                 remote_canonical.encoding == SaveEncoding::IosRawLz4;
-            let mut remote_identity = identity_for_bytes(&remote_canonical.bytes);
+            let mut remote_identity = identity_for_bytes(&normalized_remote_bytes);
             remote_identity.modified_unix_ms = remote_file.save.identity.modified_unix_ms;
             remote_identity.steam_sha1 = remote_file.save.identity.steam_sha1.clone();
             if remote_needs_compatibility_repair {
@@ -930,7 +935,7 @@ impl Engine {
                     self.pull_one(
                         local_save,
                         remote_file,
-                        &remote_canonical.bytes,
+                        &normalized_remote_bytes,
                         &operation_id,
                         &mut state,
                     )?;
@@ -1196,12 +1201,7 @@ impl Engine {
                         .map(|entry| entry.remote_name.clone())
                 })
                 .unwrap_or_else(|| {
-                    local
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
+                    format!("rep+persistentgamedata{}.dat", local.slot)
                 });
             self.push_new(
                 &cloud,
@@ -1239,7 +1239,7 @@ impl Engine {
         operation_id: &str,
         state: &mut SyncState,
     ) -> Result<()> {
-        let (stable_raw, bytes, canonical_identity) = self.prepare_upload(local).await?;
+        let (stable_raw, bytes, canonical_identity) = self.prepare_upload(local, &remote_name).await?;
         let (_, latest) = cloud.list_isaac_saves(session).await?;
         if latest
             .iter()
@@ -1294,7 +1294,7 @@ impl Engine {
         operation_id: &str,
         state: &mut SyncState,
     ) -> Result<()> {
-        let (stable_raw, bytes, canonical_identity) = self.prepare_upload(local).await?;
+        let (stable_raw, bytes, canonical_identity) = self.prepare_upload(local, &remote.request_name).await?;
         self.assert_remote_unchanged(cloud, session, remote, remote_bytes)
             .await?;
         let manager = BackupManager::new(&self.support);
@@ -1341,6 +1341,7 @@ impl Engine {
     async fn prepare_upload(
         &self,
         local: &LocalSave,
+        target_remote_name: &str,
     ) -> Result<(FileIdentity, Vec<u8>, FileIdentity)> {
         let staging = unique_temp_path(&self.support.join("tmp"), "upload");
         let stable_raw = wait_for_stable_snapshot(&local.path, &staging).await?;
@@ -1357,9 +1358,15 @@ impl Engine {
                 ),
             );
         }
+        let is_rep_plus = target_remote_name.to_ascii_lowercase().contains("rep+persistentgamedata");
+        let upload_bytes = if is_rep_plus {
+            convert_rep_to_rep_plus(&canonical.bytes)?
+        } else {
+            canonical.bytes.clone()
+        };
         let mut canonical_identity = identity_for_bytes(&canonical.bytes);
         canonical_identity.modified_unix_ms = stable_raw.modified_unix_ms;
-        Ok((stable_raw, canonical.bytes, canonical_identity))
+        Ok((stable_raw, upload_bytes, canonical_identity))
     }
 
     async fn assert_remote_unchanged(

@@ -73,6 +73,78 @@ pub struct CanonicalSave {
 /// (without an LZ4 frame header). Windows Isaac expects the decoded stream to
 /// begin directly with `ISAACNGSAVE09R  `. Steam downloads are already in that
 /// decoded representation, and native iOS Isaac accepts either representation.
+pub fn is_rep_plus_save(bytes: &[u8]) -> bool {
+    if bytes.len() < 32 {
+        return false;
+    }
+    let count = u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
+    count >= 642
+}
+
+pub fn convert_rep_plus_to_rep(bytes: &[u8]) -> Result<Vec<u8>> {
+    let canonical = canonicalize_save(bytes)?;
+    let data = &canonical.bytes;
+    if !is_rep_plus_save(data) {
+        return Ok(data.clone());
+    }
+    if data.len() < 2778 + 8 + 4 {
+        bail!("save data truncated for Rep+ format");
+    }
+    let mut out = Vec::with_capacity(14548);
+    out.extend_from_slice(REPENTANCE_MAGIC);
+    out.extend_from_slice(&data[16..20]);
+    // Sec 1 (638 achievements)
+    out.extend_from_slice(&1_u32.to_le_bytes());
+    out.extend_from_slice(&638_u32.to_le_bytes());
+    out.extend_from_slice(&638_u32.to_le_bytes());
+    out.extend_from_slice(&data[32..32 + 638]);
+    // Sec 2 (496 counters)
+    out.extend_from_slice(&2_u32.to_le_bytes());
+    out.extend_from_slice(&1984_u32.to_le_bytes());
+    out.extend_from_slice(&496_u32.to_le_bytes());
+    out.extend_from_slice(&data[686..686 + 496 * 4]);
+    // Sec 3..11 and trailer
+    out.extend_from_slice(&data[2778..data.len() - 4]);
+    // CRC32
+    let checksum = isaac_crc32(&out[16..], 0xfedc_ba76);
+    out.extend_from_slice(&checksum.to_le_bytes());
+    validate_canonical(&out)?;
+    Ok(out)
+}
+
+pub fn convert_rep_to_rep_plus(bytes: &[u8]) -> Result<Vec<u8>> {
+    let canonical = canonicalize_save(bytes)?;
+    let data = &canonical.bytes;
+    if is_rep_plus_save(data) {
+        return Ok(data.clone());
+    }
+    if data.len() < 2666 + 8 + 4 {
+        bail!("save data truncated for Repentance format");
+    }
+    let mut out = Vec::with_capacity(14660);
+    out.extend_from_slice(REPENTANCE_MAGIC);
+    out.extend_from_slice(&data[16..20]);
+    // Sec 1 (642 achievements)
+    out.extend_from_slice(&1_u32.to_le_bytes());
+    out.extend_from_slice(&642_u32.to_le_bytes());
+    out.extend_from_slice(&642_u32.to_le_bytes());
+    out.extend_from_slice(&data[32..32 + 638]);
+    out.extend_from_slice(&[0u8; 4]);
+    // Sec 2 (523 counters)
+    out.extend_from_slice(&2_u32.to_le_bytes());
+    out.extend_from_slice(&2092_u32.to_le_bytes());
+    out.extend_from_slice(&523_u32.to_le_bytes());
+    out.extend_from_slice(&data[682..682 + 1984]);
+    out.extend_from_slice(&[0u8; 108]);
+    // Sec 3..11 and trailer
+    out.extend_from_slice(&data[2666..data.len() - 4]);
+    // CRC32
+    let checksum = isaac_crc32(&out[16..], 0xfedc_ba76);
+    out.extend_from_slice(&checksum.to_le_bytes());
+    validate_canonical(&out)?;
+    Ok(out)
+}
+
 pub fn canonicalize_save(input: &[u8]) -> Result<CanonicalSave> {
     if input.starts_with(REPENTANCE_MAGIC) {
         validate_canonical(input)?;

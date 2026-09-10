@@ -25,9 +25,10 @@ struct DiscoveryMode {
 pub fn slot_for_filename(name: &str) -> Option<u8> {
     let lower = name.to_ascii_lowercase();
     for slot in 1..=3 {
+        let rep_plus = format!("rep+persistentgamedata{slot}.dat");
         let repentance = format!("rep_persistentgamedata{slot}.dat");
         let rebirth = format!("persistentgamedata{slot}.dat");
-        if lower == repentance || lower == rebirth {
+        if lower == rep_plus || lower == repentance || lower == rebirth {
             return Some(slot);
         }
     }
@@ -233,9 +234,7 @@ fn collect_repentance_slots(
             if allowed_slots.is_some_and(|allowed| !allowed.contains(&slot)) {
                 continue;
             }
-            if name
-                .to_ascii_lowercase()
-                .starts_with("rep_persistentgamedata")
+            if name.to_ascii_lowercase().starts_with("rep_persistentgamedata") || name.to_ascii_lowercase().starts_with("rep+persistentgamedata")
             {
                 slots.insert(slot);
             }
@@ -256,8 +255,8 @@ fn is_repentance_save(path: &Path) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
         .is_some_and(|name| {
-            name.to_ascii_lowercase()
-                .starts_with("rep_persistentgamedata")
+            let lower = name.to_ascii_lowercase();
+            lower.starts_with("rep_persistentgamedata") || lower.starts_with("rep+persistentgamedata")
         })
 }
 
@@ -312,9 +311,8 @@ fn walk(
             continue;
         }
         if repentance_slots.contains(&slot)
-            && !name
-                .to_ascii_lowercase()
-                .starts_with("rep_persistentgamedata")
+            && !(name.to_ascii_lowercase().starts_with("rep_persistentgamedata")
+                || name.to_ascii_lowercase().starts_with("rep+persistentgamedata"))
         {
             continue;
         }
@@ -455,6 +453,8 @@ mod tests {
     #[test]
     fn recognizes_only_supported_persistent_slot_names() {
         assert_eq!(slot_for_filename("rep_persistentgamedata1.dat"), Some(1));
+        assert_eq!(slot_for_filename("rep+persistentgamedata1.dat"), Some(1));
+        assert_eq!(slot_for_filename("REP+PERSISTENTGAMEDATA3.DAT"), Some(3));
         assert_eq!(slot_for_filename("REP_PERSISTENTGAMEDATA3.DAT"), Some(3));
         assert_eq!(slot_for_filename("persistentgamedata2.dat"), Some(2));
         assert_eq!(slot_for_filename("rep_gamestate1.dat"), None);
