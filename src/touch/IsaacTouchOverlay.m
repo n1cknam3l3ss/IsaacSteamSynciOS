@@ -122,21 +122,21 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGFloat leftMargin = 24.0;
 
     // Right shoot cluster center
-    CGFloat clusterRadius = 60.0;
-    _shootClusterCenter = CGPointMake(w - rightMargin - clusterRadius - 30.0,
+    CGFloat clusterRadius = 75.0;
+    _shootClusterCenter = CGPointMake(w - rightMargin - clusterRadius - 60.0,
                                       h - bottomMargin - clusterRadius - 10.0);
 
     // Mode toggle button (placed above shoot cluster)
-    CGFloat toggleW = 84.0;
-    CGFloat toggleH = 28.0;
+    CGFloat toggleW = 88.0;
+    CGFloat toggleH = 30.0;
     _modeToggleFrame = CGRectMake(_shootClusterCenter.x - toggleW * 0.5,
-                                  _shootClusterCenter.y - clusterRadius - 46.0,
+                                  _shootClusterCenter.y - clusterRadius - 48.0,
                                   toggleW, toggleH);
 
     // Action buttons
     CGFloat btnSize = 50.0;
     // Bomb (bottom-right, left of shoot cluster)
-    _bombFrame = CGRectMake(_shootClusterCenter.x - clusterRadius - btnSize - 20.0,
+    _bombFrame = CGRectMake(_shootClusterCenter.x - clusterRadius - btnSize - 24.0,
                             h - bottomMargin - btnSize - 10.0,
                             btnSize, btnSize);
 
@@ -185,6 +185,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     _shootUp = _shootDown = _shootLeft = _shootRight = NO;
     _rightStickActive = NO;
     _rightShootTouch = nil;
+    _rightStickKnob = _rightStickAnchor;
     if (self.hapticsEnabled) {
         [_hapticGenerator impactOccurred];
     }
@@ -222,7 +223,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 
     // Right shoot zone (around shoot cluster)
     CGFloat distToShoot = hypot(point.x - _shootClusterCenter.x, point.y - _shootClusterCenter.y);
-    if (distToShoot < 110.0) {
+    if (distToShoot < 130.0) {
         return self;
     }
 
@@ -307,7 +308,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 
         // 4. Right shoot cluster
         CGFloat distToShoot = hypot(p.x - _shootClusterCenter.x, p.y - _shootClusterCenter.y);
-        if (distToShoot < 110.0 && !_rightShootTouch) {
+        if (distToShoot < 130.0 && !_rightShootTouch) {
             _rightShootTouch = touch;
             if (self.shootMode == IVGShootModeButtons) {
                 [self updateShootButtonsForPoint:p];
@@ -355,6 +356,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
             _shootUp = _shootDown = _shootLeft = _shootRight = NO;
             IVGSetShootButtons(NO, NO, NO, NO);
             IVGSetRightStick(0.0f, 0.0f);
+            _rightStickKnob = _rightStickAnchor;
             [self setNeedsDisplay];
         } else if (touch == _bombTouch) {
             _bombTouch = nil;
@@ -428,7 +430,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGFloat dy = p.y - _shootClusterCenter.y;
     CGFloat dist = hypot(dx, dy);
 
-    CGFloat deadzone = 10.0;
+    CGFloat deadzone = 12.0;
     if (dist < deadzone) {
         // Very center: maintain current or do not activate
         return;
@@ -478,7 +480,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGFloat dy = p.y - _rightStickAnchor.y;
     CGFloat dist = hypot(dx, dy);
 
-    CGFloat maxRadius = 60.0;
+    CGFloat maxRadius = 65.0;
     CGFloat deadzone = 8.0;
 
     if (dist > maxRadius) {
@@ -541,8 +543,8 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     // 2. Draw Right Shoot Area
     if (self.shootMode == IVGShootModeButtons) {
         // 4-Button Cross
-        CGFloat btnRadius = 26.0;
-        CGFloat offset = 44.0;
+        CGFloat btnRadius = 32.0;
+        CGFloat offset = 52.0;
 
         CGPoint upCenter = CGPointMake(_shootClusterCenter.x, _shootClusterCenter.y - offset);
         CGPoint downCenter = CGPointMake(_shootClusterCenter.x, _shootClusterCenter.y + offset);
@@ -558,13 +560,13 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0 alpha:alpha * 0.6].CGColor);
         CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithRed:1.0 green:0.4 blue:0.4 alpha:alpha * 0.8].CGColor);
         CGContextSetLineWidth(ctx, 2.0);
-        CGRect baseRect = CGRectMake(_rightStickAnchor.x - 60.0, _rightStickAnchor.y - 60.0, 120.0, 120.0);
+        CGRect baseRect = CGRectMake(_rightStickAnchor.x - 65.0, _rightStickAnchor.y - 65.0, 130.0, 130.0);
         CGContextFillEllipseInRect(ctx, baseRect);
         CGContextStrokeEllipseInRect(ctx, baseRect);
 
         // Knob
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:alpha * 0.9].CGColor);
-        CGRect knobRect = CGRectMake(_rightStickKnob.x - 24.0, _rightStickKnob.y - 24.0, 48.0, 48.0);
+        CGRect knobRect = CGRectMake(_rightStickKnob.x - 26.0, _rightStickKnob.y - 26.0, 52.0, 52.0);
         CGContextFillEllipseInRect(ctx, knobRect);
         CGContextSetStrokeColorWithColor(ctx, UIColor.whiteColor.CGColor);
         CGContextStrokeEllipseInRect(ctx, knobRect);
@@ -598,7 +600,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGContextStrokeEllipseInRect(ctx, rect);
 
     NSDictionary *attrs = @{
-        NSFontAttributeName: [UIFont systemFontOfSize:17.0 weight:UIFontWeightBold],
+        NSFontAttributeName: [UIFont systemFontOfSize:20.0 weight:UIFontWeightBold],
         NSForegroundColorAttributeName: UIColor.whiteColor
     };
     CGSize strSize = [symbol sizeWithAttributes:attrs];
