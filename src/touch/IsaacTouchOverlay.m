@@ -54,6 +54,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     BOOL _pausePressed;
 
     UIImpactFeedbackGenerator *_hapticGenerator;
+    IVGShootMode _shootMode;
 }
 
 @end
@@ -170,6 +171,10 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     } else {
         [self setShootMode:IVGShootModeButtons];
     }
+}
+
+- (IVGShootMode)shootMode {
+    return _shootMode;
 }
 
 - (void)setShootMode:(IVGShootMode)mode {

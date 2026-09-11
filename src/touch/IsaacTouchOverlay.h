@@ -12,9 +12,8 @@ typedef NS_ENUM(NSInteger, IVGShootMode) {
 + (instancetype)sharedOverlay;
 - (void)updateLayoutForWindow:(UIWindow *)window;
 - (void)toggleShootMode;
-- (void)setShootMode:(IVGShootMode)mode;
-- (IVGShootMode)shootMode;
 
+@property (nonatomic, assign) IVGShootMode shootMode;
 @property (nonatomic, assign) CGFloat controlsOpacity;
 @property (nonatomic, assign) BOOL hapticsEnabled;
 
