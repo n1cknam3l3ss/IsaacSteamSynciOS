@@ -269,3 +269,4 @@ This is an unofficial project and is not affiliated with Valve, Nicalis,
 Edmund McMillen, or Apple. It contains no Isaac application, DLC, saves, Steam
 credentials, Apple certificates, or DRM bypass. Source code is released under
 the [MIT License](LICENSE).
+all credit goes to emp0ry all i did is just asked ai to implement rep+ support
