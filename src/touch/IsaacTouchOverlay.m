@@ -56,10 +56,6 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     UIImpactFeedbackGenerator *_hapticGenerator;
 }
 
-@property (nonatomic, assign) IVGShootMode shootMode;
-@property (nonatomic, assign) CGFloat controlsOpacity;
-@property (nonatomic, assign) BOOL hapticsEnabled;
-
 @end
 
 @implementation IsaacTouchOverlayView
@@ -309,7 +305,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         if (distToShoot < 110.0 && !_rightShootTouch) {
             _rightShootTouch = touch;
             if (self.shootMode == IVGShootModeButtons) {
-                [self updateShootButtonsForPoint:p isBegan:YES];
+                [self updateShootButtonsForPoint:p];
             } else {
                 _rightStickActive = YES;
                 _rightStickAnchor = _shootClusterCenter;
@@ -330,7 +326,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
             [self setNeedsDisplay];
         } else if (touch == _rightShootTouch) {
             if (self.shootMode == IVGShootModeButtons) {
-                [self updateShootButtonsForPoint:p isBegan:NO];
+                [self updateShootButtonsForPoint:p];
             } else {
                 [self updateShootStickForPoint:p];
             }
@@ -422,7 +418,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     IVGSetLeftStick(axisX, axisY);
 }
 
-- (void)updateShootButtonsForPoint:(CGPoint)p isBegan:(BOOL)isBegan {
+- (void)updateShootButtonsForPoint:(CGPoint)p {
     CGFloat dx = p.x - _shootClusterCenter.x;
     CGFloat dy = p.y - _shootClusterCenter.y;
     CGFloat dist = hypot(dx, dy);
@@ -677,7 +673,10 @@ static void ICSAttachOverlayToKeyWindow(void) {
         }
     }
     if (!targetWindow) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         targetWindow = UIApplication.sharedApplication.keyWindow;
+#pragma clang diagnostic pop
     }
     if (!targetWindow) return;
 
