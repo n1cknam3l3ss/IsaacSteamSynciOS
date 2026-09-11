@@ -246,7 +246,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         if (CGRectContainsPoint(CGRectInset(_bombFrame, -6, -6), p) && !_bombTouch) {
             _bombTouch = touch;
             _bombPressed = YES;
-            IVGSetButton(IVGButtonLeftTrigger, YES);
+            IVGSetButton(IVGButtonLeftShoulder, YES); // LB = Bomb in Isaac
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
             [self setNeedsDisplay];
             continue;
@@ -254,7 +254,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         if (CGRectContainsPoint(CGRectInset(_itemFrame, -6, -6), p) && !_itemTouch) {
             _itemTouch = touch;
             _itemPressed = YES;
-            IVGSetButton(IVGButtonLeftShoulder, YES);
+            IVGSetButton(IVGButtonLeftTrigger, YES); // LT = Active Item (Space) in Isaac
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
             [self setNeedsDisplay];
             continue;
@@ -359,12 +359,12 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         } else if (touch == _bombTouch) {
             _bombTouch = nil;
             _bombPressed = NO;
-            IVGSetButton(IVGButtonLeftTrigger, NO);
+            IVGSetButton(IVGButtonLeftShoulder, NO);
             [self setNeedsDisplay];
         } else if (touch == _itemTouch) {
             _itemTouch = nil;
             _itemPressed = NO;
-            IVGSetButton(IVGButtonLeftShoulder, NO);
+            IVGSetButton(IVGButtonLeftTrigger, NO);
             [self setNeedsDisplay];
         } else if (touch == _cardTouch) {
             _cardTouch = nil;
