@@ -176,15 +176,22 @@ static NSArray *Hook_GCController_controllers(id self, SEL _cmd) {
     if (gOrigGCControllerControllers) {
         realControllers = gOrigGCControllerControllers(self, _cmd);
     }
+    // If real physical controllers are connected, they take full priority!
+    if (realControllers.count > 0) {
+        return realControllers;
+    }
     if (!IVGIsEnabled() || gSharedVirtualController == nil) {
         return realControllers ?: @[];
     }
-    NSMutableArray *result = [NSMutableArray arrayWithCapacity:(realControllers.count + 1)];
-    [result addObject:gSharedVirtualController];
-    if (realControllers.count > 0) {
-        [result addObjectsFromArray:realControllers];
-    }
-    return result;
+    return @[ gSharedVirtualController ];
+}
+
+BOOL IVGHasPhysicalControllers(void) {
+    if (!gOrigGCControllerControllers) return NO;
+    Class gcClass = NSClassFromString(@"GCController");
+    if (!gcClass) return NO;
+    NSArray *real = gOrigGCControllerControllers(gcClass, @selector(controllers));
+    return real.count > 0;
 }
 
 void IVGInstallVirtualGamepad(void) {

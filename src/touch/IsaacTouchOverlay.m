@@ -702,9 +702,10 @@ void ICSUpdateTouchOverlayVisibility(void) {
             overlay.hidden = YES;
             return;
         }
-        // If game is in menus (title, save select, etc.), hide controls to not clutter
+        // Hide controls in menus OR when real physical gamepads are connected!
         BOOL inMenu = ICSGameMenuIsActive();
-        overlay.hidden = inMenu;
+        BOOL hasPhysical = IVGHasPhysicalControllers();
+        overlay.hidden = inMenu || hasPhysical;
     });
 }
 
@@ -725,6 +726,23 @@ void ICSInstallTouchOverlay(void) {
                                                          queue:NSOperationQueue.mainQueue
                                                     usingBlock:^(__unused NSNotification *note) {
             ICSAttachOverlayToKeyWindow();
+            ICSUpdateTouchOverlayVisibility();
+        }];
+
+        // Auto-detect physical gamepad hotplugging (1 or more gamepads)
+        [NSNotificationCenter.defaultCenter addObserverForName:@"GCControllerDidConnectNotification"
+                                                        object:nil
+                                                         queue:NSOperationQueue.mainQueue
+                                                    usingBlock:^(__unused NSNotification *note) {
+            NSLog(@"[IsaacTouch] Physical gamepad connected -> auto-hiding touch overlay");
+            ICSUpdateTouchOverlayVisibility();
+        }];
+
+        [NSNotificationCenter.defaultCenter addObserverForName:@"GCControllerDidDisconnectNotification"
+                                                        object:nil
+                                                         queue:NSOperationQueue.mainQueue
+                                                    usingBlock:^(__unused NSNotification *note) {
+            NSLog(@"[IsaacTouch] Gamepad disconnected -> checking touch overlay visibility");
             ICSUpdateTouchOverlayVisibility();
         }];
 

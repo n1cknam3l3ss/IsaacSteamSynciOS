@@ -26,6 +26,9 @@ void IVGInstallVirtualGamepad(void);
 void IVGSetEnabled(BOOL enabled);
 BOOL IVGIsEnabled(void);
 
+/// Check if any real physical Bluetooth/MFi gamepads are connected
+BOOL IVGHasPhysicalControllers(void);
+
 /// Set movement stick axis values (-1.0 to 1.0, Up is positive, Right is positive)
 void IVGSetLeftStick(float x, float y);
 
