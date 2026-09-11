@@ -4,6 +4,7 @@
 extern void ICSInstallLifecycleAdapter(void);
 extern void ICSInstallUI(void);
 extern void ICSInstallGameStateDetector(void);
+extern void ICSInstallTouchOverlay(void);
 
 static const uint64_t ICSPrelaunchTimeoutMilliseconds = 25000;
 static NSString *const ICSPreflightFinishedNotification = @"IsaacCloudSyncPreflightFinished";
@@ -33,6 +34,7 @@ static void IsaacCloudSyncBootstrap(void) {
         dispatch_async(dispatch_get_main_queue(), ^{
             ICSInstallLifecycleAdapter();
             ICSInstallGameStateDetector();
+            ICSInstallTouchOverlay();
             ICSInstallUI();
         });
     }

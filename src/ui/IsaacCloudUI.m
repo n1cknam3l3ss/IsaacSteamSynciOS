@@ -1,6 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <CoreImage/CoreImage.h>
 #import "../loaders/IsaacCloudCore.h"
+#import "../touch/IsaacVirtualGamepad.h"
+#import "../touch/IsaacTouchOverlay.h"
 
 static NSString *const ICSInvisibleButtonDefaultsKey = @"IsaacCloudSyncInvisibleMenuButton";
 static BOOL ICSQRPresentationScheduled = NO;
@@ -214,7 +216,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
     }
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 6; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 7; }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
@@ -224,6 +226,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         case 3: return [self.status[@"pending_choices"] count];
         case 4: return MIN((NSUInteger)20, self.backups.count);
         case 5: return 2;
+        case 6: return 4;
         default: return 0;
     }
 }
@@ -236,6 +239,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         case 3: return @"Conflicts / First Sync";
         case 4: return @"Verified Backups";
         case 5: return @"Interface & Diagnostics";
+        case 6: return @"Touch Controls (Gamepad)";
         default: return nil;
     }
 }
@@ -319,9 +323,31 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         return cell;
     }
 
-    cell.textLabel.text = indexPath.row == 0 ? @"Export Structured Log"
-        : (ICSButtonIsInvisible() ? @"Menu Button: Invisible (tap area remains)" : @"Menu Button: Visible");
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    if (indexPath.section == 5) {
+        cell.textLabel.text = indexPath.row == 0 ? @"Export Structured Log"
+            : (ICSButtonIsInvisible() ? @"Menu Button: Invisible (tap area remains)" : @"Menu Button: Visible");
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
+
+    if (indexPath.section == 6) {
+        IsaacTouchOverlayView *overlay = [IsaacTouchOverlayView sharedOverlay];
+        if (indexPath.row == 0) {
+            BOOL enabled = IVGIsEnabled();
+            cell.textLabel.text = [NSString stringWithFormat:@"Custom Touch Controls\n%@", enabled ? @"Enabled (using Virtual Gamepad)" : @"Disabled"];
+        } else if (indexPath.row == 1) {
+            BOOL isButtons = (overlay.shootMode == IVGShootModeButtons);
+            cell.textLabel.text = [NSString stringWithFormat:@"Shooting Mode\n%@", isButtons ? @"4-Way Buttons (Rollable for Brimstone)" : @"360° Analog Stick (for Analog/Marked)"];
+        } else if (indexPath.row == 2) {
+            CGFloat op = overlay.controlsOpacity;
+            NSString *desc = op < 0.35 ? @"Low (25%)" : (op < 0.6 ? @"Medium (45%)" : @"High (70%)");
+            cell.textLabel.text = [NSString stringWithFormat:@"Controls Opacity\n%@", desc];
+        } else {
+            cell.textLabel.text = [NSString stringWithFormat:@"Haptic Feedback\n%@", overlay.hapticsEnabled ? @"Enabled" : @"Disabled"];
+        }
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
     return cell;
 }
 
@@ -393,6 +419,25 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         button.backgroundColor = invisible ? UIColor.clearColor : [UIColor.systemBackgroundColor colorWithAlphaComponent:0.82];
         button.layer.borderWidth = invisible ? 0 : 1;
         [button setTitle:invisible ? @"" : @"☁︎" forState:UIControlStateNormal];
+        [self.tableView reloadData];
+    } else if (indexPath.section == 6) {
+        IsaacTouchOverlayView *overlay = [IsaacTouchOverlayView sharedOverlay];
+        if (indexPath.row == 0) {
+            IVGSetEnabled(!IVGIsEnabled());
+            ICSUpdateTouchOverlayVisibility();
+        } else if (indexPath.row == 1) {
+            [overlay toggleShootMode];
+        } else if (indexPath.row == 2) {
+            CGFloat op = overlay.controlsOpacity;
+            CGFloat nextOp = (op < 0.35) ? 0.45 : ((op < 0.6) ? 0.70 : 0.25);
+            overlay.controlsOpacity = nextOp;
+            [NSUserDefaults.standardUserDefaults setDouble:nextOp forKey:@"IsaacTouchOpacity"];
+            [overlay setNeedsDisplay];
+        } else if (indexPath.row == 3) {
+            BOOL next = !overlay.hapticsEnabled;
+            overlay.hapticsEnabled = next;
+            [NSUserDefaults.standardUserDefaults setBool:next forKey:@"IsaacTouchHapticsEnabled"];
+        }
         [self.tableView reloadData];
     }
 }

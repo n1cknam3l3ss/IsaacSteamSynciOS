@@ -19,7 +19,9 @@ OBJC_SOURCES := \
 	$(PROJECT_ROOT)/src/loaders/Bootstrap.m \
 	$(PROJECT_ROOT)/src/isaac/IsaacLifecycle.m \
 	$(PROJECT_ROOT)/src/isaac/IsaacGameState.mm \
-	$(PROJECT_ROOT)/src/ui/IsaacCloudUI.m
+	$(PROJECT_ROOT)/src/ui/IsaacCloudUI.m \
+	$(PROJECT_ROOT)/src/touch/IsaacVirtualGamepad.m \
+	$(PROJECT_ROOT)/src/touch/IsaacTouchOverlay.m
 
 .PHONY: all core dylib package test audit release clean
 
@@ -40,6 +42,7 @@ dylib: core
 		-Wl,-exported_symbols_list,"$(PROJECT_ROOT)/package/exports.txt" \
 		$(OBJC_SOURCES) "$(CORE_LIBRARY)" \
 		-framework Foundation -framework UIKit -framework Security -framework CoreImage \
+		-framework GameController -framework AudioToolbox \
 		-lz -liconv -lc++ -o "$(DYLIB)"
 	xcrun strip -x "$(DYLIB)"
 	@if command -v codesign >/dev/null 2>&1; then \
