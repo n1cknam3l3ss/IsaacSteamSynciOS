@@ -126,15 +126,10 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     _shootClusterCenter = CGPointMake(w - rightMargin - clusterRadius - 60.0,
                                       h - bottomMargin - clusterRadius - 10.0);
 
-    // Mode toggle button (placed above shoot cluster)
-    CGFloat toggleW = 88.0;
-    CGFloat toggleH = 30.0;
-    _modeToggleFrame = CGRectMake(_shootClusterCenter.x - toggleW * 0.5,
-                                  _shootClusterCenter.y - clusterRadius - 48.0,
-                                  toggleW, toggleH);
-
     // Action buttons
     CGFloat btnSize = 50.0;
+    CGFloat dropSize = 64.0; // Large size for The Forgotten swap & Jacob/Esau freeze!
+
     // Bomb (bottom-right, left of shoot cluster)
     _bombFrame = CGRectMake(_shootClusterCenter.x - clusterRadius - btnSize - 24.0,
                             h - bottomMargin - btnSize - 10.0,
@@ -145,21 +140,29 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
                             _bombFrame.origin.y - btnSize - 16.0,
                             btnSize, btnSize);
 
-    // Card / Pill (top of shoot area, right side)
-    _cardFrame = CGRectMake(w - rightMargin - btnSize,
-                            _modeToggleFrame.origin.y - btnSize - 10.0,
-                            btnSize, btnSize);
+    // Drop / Swap / Soul / Esau (RT) - prominent and centered above shoot cluster
+    _dropFrame = CGRectMake(_shootClusterCenter.x - dropSize * 0.5,
+                            _shootClusterCenter.y - clusterRadius - dropSize - 20.0,
+                            dropSize, dropSize);
 
-    // Drop / Swap (next to card)
-    _dropFrame = CGRectMake(_cardFrame.origin.x - btnSize - 12.0,
-                            _cardFrame.origin.y,
+    // Card / Pill (RB) - next to drop button
+    _cardFrame = CGRectMake(w - rightMargin - btnSize - 10.0,
+                            _dropFrame.origin.y + (dropSize - btnSize) * 0.5,
                             btnSize, btnSize);
 
     // Map button (top-left)
-    _mapFrame = CGRectMake(leftMargin + 10.0, topMargin + 40.0, 44.0, 44.0);
+    _mapFrame = CGRectMake(leftMargin + 10.0, topMargin + 25.0, 44.0, 44.0);
 
-    // Pause button (top-right)
-    _pauseFrame = CGRectMake(w - rightMargin - 44.0, topMargin + 40.0, 44.0, 44.0);
+    // Pause button (top-right corner)
+    CGFloat pauseSize = 44.0;
+    _pauseFrame = CGRectMake(w - rightMargin - pauseSize, topMargin + 25.0, pauseSize, pauseSize);
+
+    // Mode toggle button (placed in top-right corner, next to Pause button)
+    CGFloat toggleW = 84.0;
+    CGFloat toggleH = 28.0;
+    _modeToggleFrame = CGRectMake(_pauseFrame.origin.x - toggleW - 10.0,
+                                  _pauseFrame.origin.y + (pauseSize - toggleH) * 0.5,
+                                  toggleW, toggleH);
 
     _rightStickAnchor = _shootClusterCenter;
     _rightStickKnob = _shootClusterCenter;
@@ -208,7 +211,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     if (CGRectContainsPoint(CGRectInset(_bombFrame, -6, -6), point) ||
         CGRectContainsPoint(CGRectInset(_itemFrame, -6, -6), point) ||
         CGRectContainsPoint(CGRectInset(_cardFrame, -6, -6), point) ||
-        CGRectContainsPoint(CGRectInset(_dropFrame, -6, -6), point) ||
+        CGRectContainsPoint(CGRectInset(_dropFrame, -8, -8), point) ||
         CGRectContainsPoint(CGRectInset(_mapFrame, -6, -6), point) ||
         CGRectContainsPoint(CGRectInset(_pauseFrame, -6, -6), point)) {
         return self;
@@ -268,7 +271,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
             [self setNeedsDisplay];
             continue;
         }
-        if (CGRectContainsPoint(CGRectInset(_dropFrame, -6, -6), p) && !_dropTouch) {
+        if (CGRectContainsPoint(CGRectInset(_dropFrame, -8, -8), p) && !_dropTouch) {
             _dropTouch = touch;
             _dropPressed = YES;
             IVGSetButton(IVGButtonRightTrigger, YES);
@@ -622,8 +625,11 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGContextFillEllipseInRect(ctx, rect);
     CGContextStrokeEllipseInRect(ctx, rect);
 
+    CGFloat fontSize = MIN(rect.size.width, rect.size.height) * 0.44;
+    if (fontSize < 18.0) fontSize = 18.0;
+
     NSDictionary *attrs = @{
-        NSFontAttributeName: [UIFont systemFontOfSize:20.0],
+        NSFontAttributeName: [UIFont systemFontOfSize:fontSize],
         NSForegroundColorAttributeName: UIColor.whiteColor
     };
     CGSize strSize = [symbol sizeWithAttributes:attrs];
@@ -634,7 +640,8 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 
 - (void)drawModeToggleButtonInContext:(CGContextRef)ctx alpha:(CGFloat)alpha {
     CGRect rect = _modeToggleFrame;
-    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:14.0];
+    CGFloat cornerRadius = rect.size.height * 0.5;
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:cornerRadius];
 
     BOOL isButtons = (self.shootMode == IVGShootModeButtons);
     UIColor *fill = [UIColor colorWithWhite:0.0 alpha:alpha * 0.8];
