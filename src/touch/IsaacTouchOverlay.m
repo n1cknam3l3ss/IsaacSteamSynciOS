@@ -406,8 +406,8 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     CGFloat dy = p.y - _leftStickAnchor.y;
     CGFloat dist = hypot(dx, dy);
 
-    CGFloat maxRadius = 60.0;
-    CGFloat deadzone = 8.0;
+    CGFloat maxRadius = 52.0; // Reduced by ~13% for quicker snap direction changes
+    CGFloat deadzone = 7.0;
 
     if (dist > maxRadius) {
         dx = (dx / dist) * maxRadius;
@@ -521,13 +521,13 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0 alpha:alpha * 0.6].CGColor);
         CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0 alpha:alpha * 0.8].CGColor);
         CGContextSetLineWidth(ctx, 2.0);
-        CGRect baseRect = CGRectMake(_leftStickAnchor.x - 60.0, _leftStickAnchor.y - 60.0, 120.0, 120.0);
+        CGRect baseRect = CGRectMake(_leftStickAnchor.x - 52.0, _leftStickAnchor.y - 52.0, 104.0, 104.0);
         CGContextFillEllipseInRect(ctx, baseRect);
         CGContextStrokeEllipseInRect(ctx, baseRect);
 
         // Knob
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithRed:0.25 green:0.65 blue:1.0 alpha:alpha * 0.9].CGColor);
-        CGRect knobRect = CGRectMake(_leftStickKnob.x - 24.0, _leftStickKnob.y - 24.0, 48.0, 48.0);
+        CGRect knobRect = CGRectMake(_leftStickKnob.x - 21.0, _leftStickKnob.y - 21.0, 42.0, 42.0);
         CGContextFillEllipseInRect(ctx, knobRect);
         CGContextSetStrokeColorWithColor(ctx, UIColor.whiteColor.CGColor);
         CGContextStrokeEllipseInRect(ctx, knobRect);
@@ -538,7 +538,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.0 alpha:alpha * 0.25].CGColor);
         CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0 alpha:alpha * 0.4].CGColor);
         CGContextSetLineWidth(ctx, 1.5);
-        CGRect guideRect = CGRectMake(guideX - 45.0, guideY - 45.0, 90.0, 90.0);
+        CGRect guideRect = CGRectMake(guideX - 40.0, guideY - 40.0, 80.0, 80.0);
         CGContextFillEllipseInRect(ctx, guideRect);
         CGContextStrokeEllipseInRect(ctx, guideRect);
     }
