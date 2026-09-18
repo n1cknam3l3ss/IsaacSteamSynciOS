@@ -447,4 +447,43 @@ mod tests {
         let canonical = canonicalize_save(&input).unwrap();
         assert!(canonical.bytes.starts_with(REPENTANCE_MAGIC));
     }
+
+    #[test]
+    fn roundtrip_rep_and_rep_plus_conversion() {
+        let mut rep = REPENTANCE_MAGIC.to_vec();
+        rep.extend_from_slice(&0x1234_5678_u32.to_le_bytes());
+        // Sec 1
+        rep.extend_from_slice(&1_u32.to_le_bytes());
+        rep.extend_from_slice(&638_u32.to_le_bytes());
+        rep.extend_from_slice(&638_u32.to_le_bytes());
+        rep.extend_from_slice(&vec![1u8; 638]);
+        // Sec 2
+        rep.extend_from_slice(&2_u32.to_le_bytes());
+        rep.extend_from_slice(&1984_u32.to_le_bytes());
+        rep.extend_from_slice(&496_u32.to_le_bytes());
+        rep.extend_from_slice(&vec![2u8; 1984]);
+        // Sec 3..10
+        for section in 3_u32..=10 {
+            rep.extend_from_slice(&section.to_le_bytes());
+            rep.extend_from_slice(&0_u32.to_le_bytes());
+            rep.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        // Sec 11
+        rep.extend_from_slice(&11_u32.to_le_bytes());
+        rep.extend_from_slice(&0_u32.to_le_bytes());
+        rep.extend_from_slice(&4_u32.to_le_bytes());
+        for subtype in [4_u32, 2, 3, 1] {
+            rep.extend_from_slice(&subtype.to_le_bytes());
+            rep.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        rep.extend_from_slice(&[0_u8; TRAILER_SIZE]);
+        write_valid_checksum_for_tests(&mut rep);
+
+        assert!(!is_rep_plus_save(&rep));
+        let rep_plus = convert_rep_to_rep_plus(&rep).expect("convert to rep+");
+        assert!(is_rep_plus_save(&rep_plus));
+        let back_to_rep = convert_rep_plus_to_rep(&rep_plus).expect("convert back to rep");
+        assert!(!is_rep_plus_save(&back_to_rep));
+        assert_eq!(rep, back_to_rep);
+    }
 }

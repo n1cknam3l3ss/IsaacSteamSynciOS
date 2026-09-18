@@ -585,7 +585,8 @@ impl Engine {
             bail!("queued backup manifest no longer matches the approved version");
         }
         let backup_path = manager.verify(&record)?;
-        canonicalize_save(&fs::read(backup_path)?)
+        let backup_bytes = fs::read(&backup_path)?;
+        let canonical = canonicalize_save(&backup_bytes)
             .context("queued backup is not a valid Repentance save")?;
         let destination = locate_save_path_for_restore(&self.home, pending.slot, &record.filename)?;
         let _replacement_guard = self
@@ -595,7 +596,20 @@ impl Engine {
         if !self.replacement_allowed.load(Ordering::Acquire) {
             bail!("queued restore is only allowed during prelaunch");
         }
-        manager.restore_local(&pending.backup_id, &destination)?;
+        if is_rep_plus_save(&canonical.bytes) {
+            if destination.exists() {
+                manager.backup_file(
+                    &destination,
+                    record.slot,
+                    BackupSource::LocalBeforeRestore,
+                    &Uuid::new_v4().to_string(),
+                )?;
+            }
+            let normalized = convert_rep_plus_to_rep(&canonical.bytes)?;
+            atomic::write_bytes(&destination, &normalized)?;
+        } else {
+            manager.restore_local(&pending.backup_id, &destination)?;
+        }
         let restored_identity = canonical_identity_for_path(&destination)?;
         let restored = LocalSave {
             slot: pending.slot,
@@ -1079,7 +1093,7 @@ impl Engine {
                         self.pull_one(
                             local_save,
                             remote_file,
-                            &remote_canonical.bytes,
+                            &normalized_remote_bytes,
                             &operation_id,
                             &mut state,
                         )?;
@@ -1438,6 +1452,12 @@ impl Engine {
         operation_id: &str,
         state: &mut SyncState,
     ) -> Result<()> {
+        let normalized = if is_rep_plus_save(remote_bytes) {
+            convert_rep_plus_to_rep(remote_bytes)?
+        } else {
+            remote_bytes.to_vec()
+        };
+        let remote_bytes = normalized.as_slice();
         let _replacement_guard = self
             .replacement_guard
             .lock()
