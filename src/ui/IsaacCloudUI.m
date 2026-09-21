@@ -246,7 +246,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"cell" forIndexPath:indexPath];
-    cell.textLabel.numberOfLines = 2;
+    cell.textLabel.numberOfLines = (indexPath.section == 0 && indexPath.row == 1) ? 0 : 2;
     cell.detailTextLabel.text = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.textLabel.textColor = UIColor.labelColor;

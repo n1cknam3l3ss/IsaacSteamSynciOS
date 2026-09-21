@@ -1660,7 +1660,7 @@ fn safe_error(error: &anyhow::Error) -> String {
     let message = format!("{error:#}");
     if message.contains("http://")
         || message.contains("https://")
-        || message.matches('.').count() >= 2
+        || (message.matches('.').count() >= 2 && message.len() > 80 && message.split('.').count() == 3)
     {
         "Steam network operation failed; local play is still available".to_owned()
     } else {

@@ -17,10 +17,12 @@ use steam_cm_protocol::{
     friends::ProtocolAchievement,
     kv::{self, KVValue},
     protobuf::{
-        CMsgClientGetUserStats, CMsgClientGetUserStatsResponse, CMsgClientStoreUserStats2,
-        CMsgClientStoreUserStatsResponse, CMsgProtoBufHeader,
+        c_msg_client_games_played::GamePlayed,
+        c_msg_client_get_user_stats_response::AchievementBlocks,
         c_msg_client_get_user_stats_response::Stats as CurrentStat,
         c_msg_client_store_user_stats2::Stats as StoreStat,
+        CMsgClientGamesPlayed, CMsgClientGetUserStats, CMsgClientGetUserStatsResponse,
+        CMsgClientStoreUserStats2, CMsgClientStoreUserStatsResponse, CMsgProtoBufHeader,
     },
 };
 
@@ -184,6 +186,28 @@ async fn store_missing_unlocks(
         routing_appid: Some(appid),
         ..Default::default()
     };
+
+    // Ensure Steam marks AppID 250900 as currently playing so user stats / store are permitted
+    let _ = connection
+        .send_message(
+            EMsg::ClientGamesPlayed,
+            &header,
+            &CMsgClientGamesPlayed {
+                games_played: vec![GamePlayed {
+                    game_id: Some(appid as u64),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .await;
+
+    let get_request = CMsgClientGetUserStats {
+        game_id: Some(appid as u64),
+        steam_id_for_user: Some(steam_id),
+        crc_stats: Some(0),
+        schema_local_version: None,
+    };
     let get_packet = tokio::time::timeout(
         REQUEST_TIMEOUT,
         connection.request(EMsg::ClientGetUserStats, header.clone(), &get_request),
@@ -205,7 +229,12 @@ async fn store_missing_unlocks(
         .as_deref()
         .context("Steam achievement schema missing before store")?;
     let defs = parse_achievement_bits(schema)?;
-    let stats_to_store = build_additive_stats(&defs, &current.stats, api_names)?;
+    let stats_to_store = build_additive_stats(
+        &defs,
+        &current.stats,
+        &current.achievement_blocks,
+        api_names,
+    )?;
 
     if stats_to_store.is_empty() {
         return get_achievements_bounded(connection, state, appid)
@@ -290,21 +319,38 @@ async fn get_achievements_bounded(
 }
 
 /// Build complete values only for stat groups that gain at least one missing bit.
-/// Every source value must come from Steam's immediately preceding response. This
-/// avoids defaulting an absent group to zero and accidentally clearing existing bits.
+/// Every source value is derived from Steam's response (either explicit stats or
+/// achievement bit blocks). Groups omitted by Steam default to 0 (no achievements yet).
 fn build_additive_stats(
     definitions: &[AchievementBit],
     current_stats: &[CurrentStat],
+    achievement_blocks: &[AchievementBlocks],
     api_names: &[String],
 ) -> Result<Vec<StoreStat>> {
     let by_name: HashMap<&str, &AchievementBit> = definitions
         .iter()
         .map(|definition| (definition.api_name.as_str(), definition))
         .collect();
-    let mut values: HashMap<u32, u32> = current_stats
-        .iter()
-        .filter_map(|stat| Some((stat.stat_id?, stat.stat_value?)))
-        .collect();
+    let mut values: HashMap<u32, u32> = HashMap::new();
+
+    for block in achievement_blocks {
+        if let Some(stat_id) = block.achievement_id {
+            let mut bits = 0u32;
+            for (pos, &unlock_time) in block.unlock_time.iter().enumerate() {
+                if unlock_time != 0 && pos < 32 {
+                    bits |= 1u32 << pos;
+                }
+            }
+            values.insert(stat_id, bits);
+        }
+    }
+
+    for stat in current_stats {
+        if let (Some(id), Some(val)) = (stat.stat_id, stat.stat_value) {
+            values.insert(id, val);
+        }
+    }
+
     let mut changed = BTreeSet::new();
 
     for api_name in api_names {
@@ -318,12 +364,7 @@ fn build_additive_stats(
                 definition.bit
             );
         }
-        let value = values.get_mut(&definition.stat_id).with_context(|| {
-            format!(
-                "Steam omitted current value for achievement stat group {}; refusing unsafe write",
-                definition.stat_id
-            )
-        })?;
+        let value = values.entry(definition.stat_id).or_insert(0);
         let updated = *value | (1u32 << definition.bit);
         if updated != *value {
             *value = updated;
@@ -464,6 +505,7 @@ mod tests {
         let planned = build_additive_stats(
             &definitions,
             &current,
+            &[],
             &["1".to_owned(), "2".to_owned(), "3".to_owned()],
         )
         .unwrap();
@@ -474,10 +516,17 @@ mod tests {
     }
 
     #[test]
-    fn additive_plan_refuses_an_unknown_current_group() {
-        let error =
-            build_additive_stats(&[definition(10, 2, "1")], &[], &["1".to_owned()]).unwrap_err();
-        assert!(error.to_string().contains("refusing unsafe write"));
+    fn additive_plan_defaults_omitted_group_to_zero() {
+        let planned = build_additive_stats(
+            &[definition(10, 2, "1")],
+            &[],
+            &[],
+            &["1".to_owned()],
+        )
+        .unwrap();
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].stat_id, Some(10));
+        assert_eq!(planned[0].stat_value, Some(0b0100));
     }
 
     #[test]

@@ -63,19 +63,6 @@ pub async fn get_player_achievements(
         tokio::time::sleep(GAMES_PLAYED_RETRY_DELAY).await;
 
         let retry = request_user_stats(connection, state, appid, &request).await;
-
-        // Always clear games-played so we don't leave the user shown as in-game.
-        let _ = connection
-            .send_message(
-                EMsg::ClientGamesPlayed,
-                &session_header(state),
-                &CMsgClientGamesPlayed {
-                    games_played: vec![],
-                    ..Default::default()
-                },
-            )
-            .await;
-
         response = retry?;
     }
 

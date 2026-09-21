@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 const SECTION_TABLE_OFFSET: usize = 0x14;
 const SECTION_HEADER_SIZE: usize = 12;
 const ACHIEVEMENT_ENTRY_SIZE: usize = 1;
-const MAX_REPENTANCE_ACHIEVEMENT_ID: usize = 637;
+const MAX_REPENTANCE_ACHIEVEMENT_ID: usize = 641;
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32> {
     let end = offset.checked_add(4).context("save offset overflow")?;
