@@ -1,7 +1,12 @@
 use crate::{
     achievements, atomic,
     backups::BackupManager,
-    isaac_format::{SaveEncoding, canonical_identity_for_path, canonicalize_save, convert_rep_plus_to_rep, convert_rep_to_rep_plus, is_rep_plus_save},
+    isaac_format::{
+        SaveEncoding, canonical_identity_for_path, canonicalize_save,
+        convert_rep_plus_to_rep, convert_rep_to_rep_plus,
+        convert_rep_to_rep_plus_with_extra, extract_rep_plus_extra,
+        load_repplus_extra, save_repplus_extra, is_rep_plus_save,
+    },
     keychain,
     local::{
         discover_saves, discover_saves_for_slots, discover_saves_immediate, identity_for_bytes,
@@ -605,6 +610,11 @@ impl Engine {
                     &Uuid::new_v4().to_string(),
                 )?;
             }
+            if let Some(extra) = extract_rep_plus_extra(&canonical.bytes) {
+                let mut stored = load_repplus_extra(&self.support, record.slot);
+                stored.merge(&extra);
+                let _ = save_repplus_extra(&self.support, record.slot, &stored);
+            }
             let normalized = convert_rep_plus_to_rep(&canonical.bytes)?;
             atomic::write_bytes(&destination, &normalized)?;
         } else {
@@ -772,7 +782,7 @@ impl Engine {
         let session = session_guard
             .as_ref()
             .context("Steam session unavailable for achievement sync")?;
-        achievements::sync_from_local_saves(&self.home, session).await
+        achievements::sync_from_local_saves(&self.home, &self.support, session).await
     }
 
     fn report_achievement_result(&self, added: usize) {
@@ -951,6 +961,11 @@ impl Engine {
                 }
             };
             let normalized_remote_bytes = if is_rep_plus_save(&remote_canonical.bytes) {
+                if let Some(extra) = extract_rep_plus_extra(&remote_canonical.bytes) {
+                    let mut stored = load_repplus_extra(&self.support, local_save.slot);
+                    stored.merge(&extra);
+                    let _ = save_repplus_extra(&self.support, local_save.slot, &stored);
+                }
                 convert_rep_plus_to_rep(&remote_canonical.bytes)?
             } else {
                 remote_canonical.bytes.clone()
@@ -1200,6 +1215,13 @@ impl Engine {
         let mut state = store.load()?;
         if let Some(remote) = remote {
             let remote_bytes = cloud.download(session, remote).await?;
+            if is_rep_plus_save(&remote_bytes) {
+                if let Some(extra) = extract_rep_plus_extra(&remote_bytes) {
+                    let mut stored = load_repplus_extra(&self.support, slot);
+                    stored.merge(&extra);
+                    let _ = save_repplus_extra(&self.support, slot, &stored);
+                }
+            }
             self.backup_both(
                 &local,
                 remote,
@@ -1406,7 +1428,18 @@ impl Engine {
         }
         let is_rep_plus = target_remote_name.to_ascii_lowercase().contains("rep+persistentgamedata");
         let upload_bytes = if is_rep_plus {
-            convert_rep_to_rep_plus(&canonical.bytes)?
+            let mut extra = load_repplus_extra(&self.support, local.slot);
+            let steam_unlocked = achievements::get_cached_unlocked_ids();
+            let converted = convert_rep_to_rep_plus_with_extra(
+                &canonical.bytes,
+                &extra,
+                &steam_unlocked,
+            )?;
+            if let Some(new_extra) = extract_rep_plus_extra(&converted) {
+                extra.merge(&new_extra);
+                let _ = save_repplus_extra(&self.support, local.slot, &extra);
+            }
+            converted
         } else {
             canonical.bytes.clone()
         };
@@ -1452,6 +1485,13 @@ impl Engine {
         operation_id: &str,
         state: &mut SyncState,
     ) -> Result<()> {
+        if is_rep_plus_save(remote_bytes) {
+            if let Some(extra) = extract_rep_plus_extra(remote_bytes) {
+                let mut stored = load_repplus_extra(&self.support, local.slot);
+                stored.merge(&extra);
+                let _ = save_repplus_extra(&self.support, local.slot, &stored);
+            }
+        }
         let normalized = if is_rep_plus_save(remote_bytes) {
             convert_rep_plus_to_rep(remote_bytes)?
         } else {

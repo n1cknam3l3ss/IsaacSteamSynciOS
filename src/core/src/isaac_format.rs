@@ -1,8 +1,10 @@
 use crate::{
+    atomic,
     local::{identity_for_bytes, system_time_ms},
     model::FileIdentity,
 };
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, thread, time::Duration};
 
 const REPENTANCE_MAGIC: &[u8; 16] = b"ISAACNGSAVE09R  ";
@@ -112,15 +114,157 @@ pub fn convert_rep_plus_to_rep(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub fn convert_rep_to_rep_plus(bytes: &[u8]) -> Result<Vec<u8>> {
-    let canonical = canonicalize_save(bytes)?;
-    let data = &canonical.bytes;
-    if is_rep_plus_save(data) {
-        return Ok(data.clone());
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RepPlusExtra {
+    pub extra_achievements: Vec<u8>,
+    pub extra_counters: Vec<u8>,
+}
+
+impl RepPlusExtra {
+    pub fn merge(&mut self, other: &RepPlusExtra) {
+        if self.extra_achievements.len() < other.extra_achievements.len() {
+            self.extra_achievements.resize(other.extra_achievements.len(), 0);
+        }
+        for (i, &byte) in other.extra_achievements.iter().enumerate() {
+            self.extra_achievements[i] |= byte;
+        }
+        if self.extra_counters.len() < other.extra_counters.len() {
+            self.extra_counters.resize(other.extra_counters.len(), 0);
+        }
+        for i in (0..other.extra_counters.len()).step_by(4) {
+            if i + 4 <= other.extra_counters.len() && i + 4 <= self.extra_counters.len() {
+                let old_val = u32::from_le_bytes(self.extra_counters[i..i + 4].try_into().unwrap());
+                let new_val = u32::from_le_bytes(other.extra_counters[i..i + 4].try_into().unwrap());
+                let max_val = old_val.max(new_val);
+                self.extra_counters[i..i + 4].copy_from_slice(&max_val.to_le_bytes());
+            }
+        }
     }
+}
+
+pub fn save_repplus_extra(support_dir: &Path, slot: u8, extra: &RepPlusExtra) -> Result<()> {
+    let path = support_dir.join(format!("state/repplus_extra_slot{slot}.json"));
+    let bytes = serde_json::to_vec_pretty(extra)?;
+    atomic::write_bytes(&path, &bytes)
+}
+
+pub fn load_repplus_extra(support_dir: &Path, slot: u8) -> RepPlusExtra {
+    let path = support_dir.join(format!("state/repplus_extra_slot{slot}.json"));
+    if !path.exists() {
+        return RepPlusExtra::default();
+    }
+    fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn extract_rep_plus_extra(bytes: &[u8]) -> Option<RepPlusExtra> {
+    let canonical = canonicalize_save(bytes).ok()?;
+    let data = &canonical.bytes;
+    if !is_rep_plus_save(data) || data.len() < 2778 + 8 + 4 {
+        return None;
+    }
+    let extra_achievements = data[670..674].to_vec();
+    let extra_counters = data[2670..2778].to_vec();
+    Some(RepPlusExtra {
+        extra_achievements,
+        extra_counters,
+    })
+}
+
+pub fn convert_rep_to_rep_plus_with_extra(
+    bytes: &[u8],
+    extra: &RepPlusExtra,
+    steam_unlocked_ids: &[u32],
+) -> Result<Vec<u8>> {
+    let canonical = canonicalize_save(bytes)?;
+    let mut data = canonical.bytes;
+    if is_rep_plus_save(&data) {
+        if data.len() < 2778 + 8 + 4 {
+            bail!("save data truncated for Rep+ format");
+        }
+        let mut modified = false;
+
+        // Check extra achievements from extra
+        for (i, &b) in extra.extra_achievements.iter().take(4).enumerate() {
+            if b == 1 && data[670 + i] != 1 {
+                data[670 + i] = 1;
+                modified = true;
+            }
+        }
+
+        // Check Steam unlocked achievements 638..=641
+        for &id in steam_unlocked_ids {
+            if (638..=641).contains(&id) {
+                let idx = (id - 638) as usize;
+                if data[670 + idx] != 1 {
+                    data[670 + idx] = 1;
+                    modified = true;
+                }
+            }
+        }
+
+        // Defeating Mom (achievement 1) unlocks "Read Up!" / item descriptions (achievement 641)
+        if data[32 + 1] == 1 && data[670 + 3] != 1 {
+            data[670 + 3] = 1;
+            modified = true;
+        }
+
+        // Check counters from extra
+        for i in (0..extra.extra_counters.len().min(108)).step_by(4) {
+            if i + 4 <= extra.extra_counters.len() && i + 4 <= 108 {
+                let extra_val = u32::from_le_bytes(extra.extra_counters[i..i + 4].try_into().unwrap());
+                let cur_val = u32::from_le_bytes(data[2670 + i..2670 + i + 4].try_into().unwrap());
+                if extra_val > cur_val {
+                    data[2670 + i..2670 + i + 4].copy_from_slice(&extra_val.to_le_bytes());
+                    modified = true;
+                }
+            }
+        }
+
+        if modified {
+            let checksum_offset = data.len() - 4;
+            let checksum = isaac_crc32(&data[16..checksum_offset], 0xfedc_ba76);
+            data[checksum_offset..].copy_from_slice(&checksum.to_le_bytes());
+            validate_canonical(&data)?;
+        }
+
+        return Ok(data);
+    }
+
     if data.len() < 2666 + 8 + 4 {
         bail!("save data truncated for Repentance format");
     }
+
+    let mut extra_ach = if extra.extra_achievements.len() >= 4 {
+        extra.extra_achievements[..4].to_vec()
+    } else {
+        let mut a = extra.extra_achievements.clone();
+        a.resize(4, 0);
+        a
+    };
+
+    for &id in steam_unlocked_ids {
+        if (638..=641).contains(&id) {
+            let idx = (id - 638) as usize;
+            extra_ach[idx] = 1;
+        }
+    }
+
+    // Defeating Mom (achievement 1) unlocks "Read Up!" / item descriptions (achievement 641)
+    if data[32 + 1] == 1 {
+        extra_ach[3] = 1;
+    }
+
+    let mut extra_cnt = if extra.extra_counters.len() >= 108 {
+        extra.extra_counters[..108].to_vec()
+    } else {
+        let mut c = extra.extra_counters.clone();
+        c.resize(108, 0);
+        c
+    };
+
     let mut out = Vec::with_capacity(14660);
     out.extend_from_slice(REPENTANCE_MAGIC);
     out.extend_from_slice(&data[16..20]);
@@ -129,13 +273,13 @@ pub fn convert_rep_to_rep_plus(bytes: &[u8]) -> Result<Vec<u8>> {
     out.extend_from_slice(&642_u32.to_le_bytes());
     out.extend_from_slice(&642_u32.to_le_bytes());
     out.extend_from_slice(&data[32..32 + 638]);
-    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&extra_ach);
     // Sec 2 (523 counters)
     out.extend_from_slice(&2_u32.to_le_bytes());
     out.extend_from_slice(&2092_u32.to_le_bytes());
     out.extend_from_slice(&523_u32.to_le_bytes());
     out.extend_from_slice(&data[682..682 + 1984]);
-    out.extend_from_slice(&[0u8; 108]);
+    out.extend_from_slice(&extra_cnt);
     // Sec 3..11 and trailer
     out.extend_from_slice(&data[2666..data.len() - 4]);
     // CRC32
@@ -143,6 +287,10 @@ pub fn convert_rep_to_rep_plus(bytes: &[u8]) -> Result<Vec<u8>> {
     out.extend_from_slice(&checksum.to_le_bytes());
     validate_canonical(&out)?;
     Ok(out)
+}
+
+pub fn convert_rep_to_rep_plus(bytes: &[u8]) -> Result<Vec<u8>> {
+    convert_rep_to_rep_plus_with_extra(bytes, &RepPlusExtra::default(), &[])
 }
 
 pub fn canonicalize_save(input: &[u8]) -> Result<CanonicalSave> {
@@ -485,5 +633,82 @@ mod tests {
         let back_to_rep = convert_rep_plus_to_rep(&rep_plus).expect("convert back to rep");
         assert!(!is_rep_plus_save(&back_to_rep));
         assert_eq!(rep, back_to_rep);
+    }
+
+    #[test]
+    fn test_repplus_extra_preservation_and_safeguards() {
+        let mut rep_plus = REPENTANCE_MAGIC.to_vec();
+        rep_plus.extend_from_slice(&0x1234_5678_u32.to_le_bytes());
+        // Sec 1 (642 entries)
+        rep_plus.extend_from_slice(&1_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&642_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&642_u32.to_le_bytes());
+        let mut sec1_data = vec![0u8; 642];
+        sec1_data[1] = 1; // Mom defeated
+        sec1_data[638] = 1; // Play Online
+        sec1_data[639] = 0; // Win Online (locked)
+        sec1_data[640] = 1; // Win Online Daily
+        sec1_data[641] = 1; // Read Up! (item descriptions)
+        rep_plus.extend_from_slice(&sec1_data);
+
+        // Sec 2 (523 counters = 2092 bytes)
+        rep_plus.extend_from_slice(&2_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&2092_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&523_u32.to_le_bytes());
+        let mut sec2_data = vec![0u8; 2092];
+        // Set counter 496 (the first Rep+ counter) to 42
+        sec2_data[496 * 4..496 * 4 + 4].copy_from_slice(&42u32.to_le_bytes());
+        rep_plus.extend_from_slice(&sec2_data);
+
+        // Sec 3..10
+        for section in 3_u32..=10 {
+            rep_plus.extend_from_slice(&section.to_le_bytes());
+            rep_plus.extend_from_slice(&0_u32.to_le_bytes());
+            rep_plus.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        // Sec 11
+        rep_plus.extend_from_slice(&11_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&0_u32.to_le_bytes());
+        rep_plus.extend_from_slice(&4_u32.to_le_bytes());
+        for subtype in [4_u32, 2, 3, 1] {
+            rep_plus.extend_from_slice(&subtype.to_le_bytes());
+            rep_plus.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        rep_plus.extend_from_slice(&[0_u8; TRAILER_SIZE]);
+        write_valid_checksum_for_tests(&mut rep_plus);
+
+        assert!(is_rep_plus_save(&rep_plus));
+
+        // 1. Extract extra from Rep+
+        let extra = extract_rep_plus_extra(&rep_plus).expect("extracted extra");
+        assert_eq!(extra.extra_achievements, vec![1, 0, 1, 1]);
+        let counter_496 = u32::from_le_bytes(extra.extra_counters[0..4].try_into().unwrap());
+        assert_eq!(counter_496, 42);
+
+        // 2. Convert to Rep (simulating iOS download)
+        let rep = convert_rep_plus_to_rep(&rep_plus).expect("convert to rep");
+        assert!(!is_rep_plus_save(&rep));
+
+        // 3. Convert back to Rep+ with preserved extra
+        let restored = convert_rep_to_rep_plus_with_extra(&rep, &extra, &[]).expect("restore rep+");
+        assert!(is_rep_plus_save(&restored));
+        assert_eq!(restored, rep_plus);
+
+        // 4. Test Mom defeat safeguard: even with empty extra and empty steam IDs,
+        // achievement 641 ("Read Up!") is set to 1 because Mom was defeated (sec1_data[1] == 1)
+        let blank_extra = RepPlusExtra::default();
+        let safe_rep_plus = convert_rep_to_rep_plus_with_extra(&rep, &blank_extra, &[]).expect("safe rep+");
+        assert_eq!(safe_rep_plus[670 + 3], 1); // 670 + 3 is achievement 641
+
+        // 5. Test Steam unlocked overlay: unlock 639 ("Win Online") via Steam cache
+        let steam_restored = convert_rep_to_rep_plus_with_extra(&rep, &extra, &[639]).expect("steam overlay");
+        assert_eq!(steam_restored[670 + 1], 1); // achievement 639 now unlocked
+
+        // 6. Test healing an existing Rep+ save where achievement 641 was mistakenly 0
+        let mut corrupted_rep_plus = rep_plus.clone();
+        corrupted_rep_plus[670 + 3] = 0; // achievement 641 wiped
+        write_valid_checksum_for_tests(&mut corrupted_rep_plus);
+        let healed = convert_rep_to_rep_plus_with_extra(&corrupted_rep_plus, &blank_extra, &[]).expect("healed");
+        assert_eq!(healed[670 + 3], 1); // healed back to 1!
     }
 }

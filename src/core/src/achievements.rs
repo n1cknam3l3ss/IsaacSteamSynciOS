@@ -89,8 +89,12 @@ pub fn achievements_json() -> String {
 /// - local unlocked + Steam locked => unlock on Steam
 /// - local unlocked + Steam unlocked => no-op
 /// - local locked + Steam unlocked => NEVER clear Steam
-pub async fn sync_from_local_saves(home: &Path, session: &SteamSession) -> Result<usize> {
-    let local_ids = collect_local_unlocks(home)?;
+pub async fn sync_from_local_saves(
+    home: &Path,
+    support: &Path,
+    session: &SteamSession,
+) -> Result<usize> {
+    let local_ids = collect_local_unlocks(home, support)?;
     {
         let mut target = save_unlocks()
             .lock()
@@ -341,13 +345,32 @@ fn build_additive_stats(
                     bits |= 1u32 << pos;
                 }
             }
-            values.insert(stat_id, bits);
+            let entry = values.entry(stat_id).or_insert(0);
+            *entry |= bits;
         }
     }
 
     for stat in current_stats {
         if let (Some(id), Some(val)) = (stat.stat_id, stat.stat_value) {
-            values.insert(id, val);
+            let entry = values.entry(id).or_insert(0);
+            *entry |= val;
+        }
+    }
+
+    // Safety net: ensure any achievement already marked achieved in our cache
+    // has its bit set, so an existing unlock can never be zeroed out.
+    let cached_achieved: BTreeSet<String> = cache()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .filter(|a| a.achieved)
+        .map(|a| a.apiname.clone())
+        .collect();
+
+    for def in definitions {
+        if cached_achieved.contains(&def.api_name) && def.bit < 32 {
+            let entry = values.entry(def.stat_id).or_insert(0);
+            *entry |= 1u32 << def.bit;
         }
     }
 
@@ -424,12 +447,18 @@ fn find_stats_node(root: &KVValue) -> Option<&KVValue> {
         .find_map(|(_, value)| value.get("stats"))
 }
 
-fn collect_local_unlocks(home: &Path) -> Result<BTreeSet<u32>> {
-    let saves = discover_saves(home)?;
-    if saves.is_empty() {
-        return Ok(BTreeSet::new());
-    }
+pub fn get_cached_unlocked_ids() -> Vec<u32> {
+    cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .values()
+        .filter(|achievement| achievement.achieved)
+        .filter_map(|achievement| achievement.apiname.parse::<u32>().ok())
+        .collect()
+}
 
+fn collect_local_unlocks(home: &Path, support: &Path) -> Result<BTreeSet<u32>> {
+    let saves = discover_saves(home)?;
     let mut unlocked = BTreeSet::new();
     for save in saves {
         let raw = fs::read(&save.path)
@@ -439,6 +468,22 @@ fn collect_local_unlocks(home: &Path) -> Result<BTreeSet<u32>> {
                 .with_context(|| format!("parse achievements from {}", save.path.display()))?,
         );
     }
+
+    // Defeating Mom (Achievement 1) grants "Read Up!" (Achievement 641) in Repentance+
+    if unlocked.contains(&1) {
+        unlocked.insert(641);
+    }
+
+    // Include any Rep+ achievements preserved in support state
+    for slot in 1..=3 {
+        let extra = crate::isaac_format::load_repplus_extra(support, slot);
+        for (i, &b) in extra.extra_achievements.iter().take(4).enumerate() {
+            if b == 1 {
+                unlocked.insert(638 + i as u32);
+            }
+        }
+    }
+
     Ok(unlocked)
 }
 
@@ -562,5 +607,34 @@ mod tests {
 
         let error = ensure_no_existing_unlocks_lost(&prior, &verified).unwrap_err();
         assert!(error.to_string().contains("failed to preserve 1"));
+    }
+
+    #[test]
+    fn additive_plan_combines_blocks_and_stats_and_cache_additively() {
+        let definitions = vec![
+            definition(10, 1, "1"),
+            definition(10, 2, "2"),
+            definition(10, 3, "3"),
+        ];
+        let blocks = vec![AchievementBlocks {
+            achievement_id: Some(10),
+            unlock_time: vec![0, 100], // pos 1 unlocked
+        }];
+        let current = vec![CurrentStat {
+            stat_id: Some(10),
+            stat_value: Some(0b0100), // bit 2
+        }];
+        let planned = build_additive_stats(
+            &definitions,
+            &current,
+            &blocks,
+            &["3".to_owned()],
+        )
+        .unwrap();
+
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].stat_id, Some(10));
+        // bit 1 (from blocks: 0b0010), bit 2 (from current: 0b0100), bit 3 (added: 0b1000)
+        assert_eq!(planned[0].stat_value, Some(0b1110));
     }
 }
