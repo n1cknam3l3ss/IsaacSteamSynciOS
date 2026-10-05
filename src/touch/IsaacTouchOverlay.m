@@ -1,6 +1,7 @@
 #import "IsaacTouchOverlay.h"
 #import "IsaacVirtualGamepad.h"
 #import <AudioToolbox/AudioToolbox.h>
+#import <math.h>
 
 extern bool ICSGameMenuIsActive(void);
 extern bool ICSIsCharacterJacobAndEsau(void);
@@ -239,7 +240,7 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
 - (BOOL)isCurrentCharacterJacobAndEsau {
     static BOOL cachedVal = NO;
     static NSTimeInterval lastCheck = 0;
-    NSTimeInterval now = CACurrentMediaTime();
+    NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
     if (now - lastCheck > 0.8) {
         lastCheck = now;
         cachedVal = ICSIsCharacterJacobAndEsau();

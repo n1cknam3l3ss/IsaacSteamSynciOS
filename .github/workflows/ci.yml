@@ -22,7 +22,12 @@ jobs:
       - name: Run core tests
         run: make test
       - name: Build release artifacts
-        run: make release
+        run: |
+          make release 2>&1 | tee /tmp/build.log || {
+            echo "::error::Build release failed! Full log follows:"
+            cat /tmp/build.log
+            exit 1
+          }
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
