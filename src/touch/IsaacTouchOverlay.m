@@ -72,6 +72,8 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
     IVGShootMode _shootMode;
 }
 
+- (void)updateActionButtons;
+
 @end
 
 @implementation IsaacTouchOverlayView
@@ -304,6 +306,59 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
     return nil;
 }
 
+#pragma mark - Action Button State Management
+
+- (void)updateActionButtons {
+    if (![self shouldShowJacobPetals]) {
+        // Standard single-character mapping
+        IVGSetButton(IVGButtonLeftTrigger, _itemPressed);
+        IVGSetButton(IVGButtonRightShoulder, _cardPressed);
+        IVGSetButton(IVGButtonRightTrigger, _dropPressed);
+        return;
+    }
+
+    // Repentance+ Enhanced Scheme emulation for Jacob & Esau on iOS:
+    // Game engine button interpretation:
+    // - Jacob Active:   LT (RT=0, RB=0)
+    // - Jacob Pocket:   LT + RT (RB=0)
+    // - Esau Active:    RB (RT=0, LT=0)
+    // - Esau Pocket:    RB + RT (LT=0)
+    // - Esau Solo Move: RT (LT=0, RB=0)
+    BOOL esauActiveRequested = _petalItemActive || (_dropPressed && _itemPressed);
+    BOOL esauPocketRequested = _petalCardActive || (_dropPressed && _cardPressed);
+    BOOL jacobPocketRequested = (!_dropPressed && _cardPressed);
+    BOOL jacobActiveRequested = (!_dropPressed && _itemPressed);
+    BOOL dropHeld = _dropPressed;
+
+    BOOL outLT = NO;
+    BOOL outRB = NO;
+    BOOL outRT = NO;
+
+    if (esauActiveRequested) {
+        outRB = YES;
+        outRT = NO; // Release RT so game engine fires Esau Active instead of Pocket!
+        outLT = NO;
+    } else if (esauPocketRequested) {
+        outRB = YES;
+        outRT = YES;
+        outLT = NO;
+    } else if (jacobPocketRequested) {
+        outLT = YES;
+        outRT = YES;
+        outRB = NO;
+    } else if (jacobActiveRequested) {
+        outLT = YES;
+        outRT = NO;
+        outRB = NO;
+    } else if (dropHeld) {
+        outRT = YES;
+    }
+
+    IVGSetButton(IVGButtonLeftTrigger, outLT);
+    IVGSetButton(IVGButtonRightShoulder, outRB);
+    IVGSetButton(IVGButtonRightTrigger, outRT);
+}
+
 #pragma mark - Touch Handling
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -323,16 +378,16 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
             if (distItem <= 38.0 && !_petalItemTouch) {
                 _petalItemTouch = touch;
                 _petalItemActive = YES;
-                IVGSetButton(IVGButtonLeftTrigger, YES); // Esau Item
                 if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self updateActionButtons];
                 [self setNeedsDisplay];
                 continue;
             }
             if (distCard <= 38.0 && !_petalCardTouch) {
                 _petalCardTouch = touch;
                 _petalCardActive = YES;
-                IVGSetButton(IVGButtonRightShoulder, YES); // Esau Card
                 if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self updateActionButtons];
                 [self setNeedsDisplay];
                 continue;
             }
@@ -350,16 +405,16 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
         if (CGRectContainsPoint(CGRectInset(_itemFrame, -6, -6), p) && !_itemTouch) {
             _itemTouch = touch;
             _itemPressed = YES;
-            IVGSetButton(IVGButtonLeftTrigger, YES); // LT = Active Item (Space) in Isaac
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+            [self updateActionButtons];
             [self setNeedsDisplay];
             continue;
         }
         if (CGRectContainsPoint(CGRectInset(_cardFrame, -6, -6), p) && !_cardTouch) {
             _cardTouch = touch;
             _cardPressed = YES;
-            IVGSetButton(IVGButtonRightShoulder, YES);
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+            [self updateActionButtons];
             [self setNeedsDisplay];
             continue;
         }
@@ -368,8 +423,8 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
             _dropPressed = YES;
             _petalItemActive = NO;
             _petalCardActive = NO;
-            IVGSetButton(IVGButtonRightTrigger, YES);
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+            [self updateActionButtons];
             [self setNeedsDisplay];
             continue;
         }
@@ -442,16 +497,12 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
             BOOL itemActive = _petalItemActive ? (distItem <= 46.0) : (distItem <= 38.0);
             BOOL cardActive = _petalCardActive ? (distCard <= 46.0) : (distCard <= 38.0);
 
-            if (itemActive != _petalItemActive) {
+            if (itemActive != _petalItemActive || cardActive != _petalCardActive) {
+                BOOL newlyEntered = (itemActive && !_petalItemActive) || (cardActive && !_petalCardActive);
                 _petalItemActive = itemActive;
-                IVGSetButton(IVGButtonLeftTrigger, itemActive);
-                if (itemActive && self.hapticsEnabled) [_hapticGenerator impactOccurred];
-                [self setNeedsDisplay];
-            }
-            if (cardActive != _petalCardActive) {
                 _petalCardActive = cardActive;
-                IVGSetButton(IVGButtonRightShoulder, cardActive);
-                if (cardActive && self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                if (newlyEntered && self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self updateActionButtons];
                 [self setNeedsDisplay];
             }
         }
@@ -483,35 +534,33 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
         } else if (touch == _itemTouch) {
             _itemTouch = nil;
             _itemPressed = NO;
-            IVGSetButton(IVGButtonLeftTrigger, NO);
+            [self updateActionButtons];
             [self setNeedsDisplay];
         } else if (touch == _cardTouch) {
             _cardTouch = nil;
             _cardPressed = NO;
-            IVGSetButton(IVGButtonRightShoulder, NO);
+            [self updateActionButtons];
             [self setNeedsDisplay];
         } else if (touch == _petalItemTouch) {
             _petalItemTouch = nil;
             _petalItemActive = NO;
-            IVGSetButton(IVGButtonLeftTrigger, NO);
+            [self updateActionButtons];
             [self setNeedsDisplay];
         } else if (touch == _petalCardTouch) {
             _petalCardTouch = nil;
             _petalCardActive = NO;
-            IVGSetButton(IVGButtonRightShoulder, NO);
+            [self updateActionButtons];
             [self setNeedsDisplay];
         } else if (touch == _dropTouch) {
             _dropTouch = nil;
             _dropPressed = NO;
             if (_petalItemActive && !_petalItemTouch) {
                 _petalItemActive = NO;
-                IVGSetButton(IVGButtonLeftTrigger, NO);
             }
             if (_petalCardActive && !_petalCardTouch) {
                 _petalCardActive = NO;
-                IVGSetButton(IVGButtonRightShoulder, NO);
             }
-            IVGSetButton(IVGButtonRightTrigger, NO);
+            [self updateActionButtons];
             [self setNeedsDisplay];
         } else if (touch == _mapTouch) {
             _mapTouch = nil;
