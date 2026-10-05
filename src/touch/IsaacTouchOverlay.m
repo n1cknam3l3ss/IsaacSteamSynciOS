@@ -65,6 +65,8 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
     CGPoint _petalCardCenter;
     CGFloat _petalRadius;
     IVGJacobPetalsMode _jacobPetalsMode;
+    CGFloat _controlsOpacity;
+    BOOL _hapticsEnabled;
 
     UIImpactFeedbackGenerator *_hapticGenerator;
     IVGShootMode _shootMode;
