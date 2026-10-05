@@ -138,6 +138,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
 @property(nonatomic) NSTimer *timer;
 @property(nonatomic) BOOL qrPresented;
 @property(nonatomic) BOOL guardPromptPresented;
+@property(nonatomic) UISlider *opacitySlider;
 @end
 
 @implementation ICSPanelViewController
@@ -147,8 +148,25 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
     self.title = @"Isaac Steam Sync iOS";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(closePanel)];
     [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"cell"];
+
+    self.opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 140, 30)];
+    self.opacitySlider.minimumValue = 0.05f;
+    self.opacitySlider.maximumValue = 0.85f;
+    [self.opacitySlider addTarget:self action:@selector(opacitySliderChanged:) forControlEvents:UIControlEventValueChanged];
+
     [self refresh];
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.75 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
+}
+
+- (void)opacitySliderChanged:(UISlider *)slider {
+    IsaacTouchOverlayView *overlay = [IsaacTouchOverlayView sharedOverlay];
+    overlay.controlsOpacity = slider.value;
+    NSIndexPath *ip = [NSIndexPath indexPathForRow:2 inSection:6];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:ip];
+    if (cell) {
+        int percent = (int)round(slider.value * 100.0);
+        cell.textLabel.text = [NSString stringWithFormat:@"Controls Opacity\n%d%% (5%% – 85%%)", percent];
+    }
 }
 
 - (void)dealloc { [self.timer invalidate]; }
@@ -174,7 +192,9 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
 - (void)refresh {
     self.status = ICSReadDictionary(ICSCoreCopyStatusJSON);
     self.backups = ICSReadArray(ICSCoreCopyBackupsJSON);
-    [self.tableView reloadData];
+    if (!self.opacitySlider.isTracking) {
+        [self.tableView reloadData];
+    }
     NSString *qrURL = self.status[@"qr_url"];
     BOOL awaitingGuard = [self.status[@"phase"] isKindOfClass:NSString.class]
         && [self.status[@"phase"] isEqualToString:@"awaiting_steam_guard"];
@@ -226,7 +246,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         case 3: return [self.status[@"pending_choices"] count];
         case 4: return MIN((NSUInteger)20, self.backups.count);
         case 5: return 2;
-        case 6: return 4;
+        case 6: return 5;
         default: return 0;
     }
 }
@@ -249,6 +269,8 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
     cell.textLabel.numberOfLines = (indexPath.section == 0 && indexPath.row == 1) ? 0 : 2;
     cell.detailTextLabel.text = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.accessoryView = nil;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.textLabel.textColor = UIColor.labelColor;
 
     if (indexPath.section == 0) {
@@ -335,17 +357,33 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         if (indexPath.row == 0) {
             BOOL enabled = IVGIsEnabled();
             cell.textLabel.text = [NSString stringWithFormat:@"Custom Touch Controls\n%@", enabled ? @"Enabled (using Virtual Gamepad)" : @"Disabled"];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 1) {
             BOOL isButtons = (overlay.shootMode == IVGShootModeButtons);
             cell.textLabel.text = [NSString stringWithFormat:@"Shooting Mode\n%@", isButtons ? @"4-Way Buttons (Rollable for Brimstone)" : @"360° Analog Stick (for Analog/Marked)"];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else if (indexPath.row == 2) {
-            CGFloat op = overlay.controlsOpacity;
-            NSString *desc = op < 0.35 ? @"Low (25%)" : (op < 0.6 ? @"Medium (45%)" : @"High (70%)");
-            cell.textLabel.text = [NSString stringWithFormat:@"Controls Opacity\n%@", desc];
+            int percent = (int)round(overlay.controlsOpacity * 100.0);
+            cell.textLabel.text = [NSString stringWithFormat:@"Controls Opacity\n%d%% (5%% – 85%%)", percent];
+            if (!self.opacitySlider.isTracking) {
+                self.opacitySlider.value = (float)overlay.controlsOpacity;
+            }
+            cell.accessoryView = self.opacitySlider;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            return cell;
+        } else if (indexPath.row == 3) {
+            NSString *modeStr = @"Auto (Active for Jacob & Esau)";
+            if (overlay.jacobPetalsMode == IVGJacobPetalsAlways) {
+                modeStr = @"Always Active (Hold RT)";
+            } else if (overlay.jacobPetalsMode == IVGJacobPetalsDisabled) {
+                modeStr = @"Disabled";
+            }
+            cell.textLabel.text = [NSString stringWithFormat:@"Jacob & Esau Quick Petals\n%@", modeStr];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else {
             cell.textLabel.text = [NSString stringWithFormat:@"Haptic Feedback\n%@", overlay.hapticsEnabled ? @"Enabled" : @"Disabled"];
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
     return cell;
@@ -427,13 +465,10 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
             ICSUpdateTouchOverlayVisibility();
         } else if (indexPath.row == 1) {
             [overlay toggleShootMode];
-        } else if (indexPath.row == 2) {
-            CGFloat op = overlay.controlsOpacity;
-            CGFloat nextOp = (op < 0.35) ? 0.45 : ((op < 0.6) ? 0.70 : 0.25);
-            overlay.controlsOpacity = nextOp;
-            [NSUserDefaults.standardUserDefaults setDouble:nextOp forKey:@"IsaacTouchOpacity"];
-            [overlay setNeedsDisplay];
         } else if (indexPath.row == 3) {
+            IVGJacobPetalsMode nextMode = (overlay.jacobPetalsMode + 1) % 3;
+            overlay.jacobPetalsMode = nextMode;
+        } else if (indexPath.row == 4) {
             BOOL next = !overlay.hapticsEnabled;
             overlay.hapticsEnabled = next;
             [NSUserDefaults.standardUserDefaults setBool:next forKey:@"IsaacTouchHapticsEnabled"];

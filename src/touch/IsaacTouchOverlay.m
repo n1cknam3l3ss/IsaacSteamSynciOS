@@ -1,12 +1,16 @@
 #import "IsaacTouchOverlay.h"
 #import "IsaacVirtualGamepad.h"
 #import <AudioToolbox/AudioToolbox.h>
+#import <mach/mach.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 
 extern bool ICSGameMenuIsActive(void);
 
 static NSString *const kIVGShootModeDefaultsKey = @"IsaacTouchShootMode";
 static NSString *const kIVGOpacityDefaultsKey = @"IsaacTouchOpacity";
 static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
+static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode";
 
 @interface IsaacTouchOverlayView () {
     // Touches tracking
@@ -16,6 +20,8 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     __weak UITouch *_itemTouch;
     __weak UITouch *_cardTouch;
     __weak UITouch *_dropTouch;
+    __weak UITouch *_petalItemTouch;
+    __weak UITouch *_petalCardTouch;
     __weak UITouch *_mapTouch;
     __weak UITouch *_pauseTouch;
 
@@ -53,6 +59,14 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     BOOL _mapPressed;
     BOOL _pausePressed;
 
+    // Jacob & Esau radial petals state
+    BOOL _petalItemActive;
+    BOOL _petalCardActive;
+    CGPoint _petalItemCenter;
+    CGPoint _petalCardCenter;
+    CGFloat _petalRadius;
+    IVGJacobPetalsMode _jacobPetalsMode;
+
     UIImpactFeedbackGenerator *_hapticGenerator;
     IVGShootMode _shootMode;
 }
@@ -83,10 +97,13 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         _shootMode = savedMode ? [savedMode integerValue] : IVGShootModeButtons;
 
         NSNumber *savedOpacity = [NSUserDefaults.standardUserDefaults objectForKey:kIVGOpacityDefaultsKey];
-        _controlsOpacity = savedOpacity ? [savedOpacity doubleValue] : 0.45;
+        _controlsOpacity = savedOpacity ? [savedOpacity doubleValue] : 0.35;
 
         NSNumber *savedHaptics = [NSUserDefaults.standardUserDefaults objectForKey:kIVGHapticsDefaultsKey];
         _hapticsEnabled = savedHaptics ? [savedHaptics boolValue] : YES;
+
+        NSNumber *savedJacob = [NSUserDefaults.standardUserDefaults objectForKey:kIVGJacobPetalsDefaultsKey];
+        _jacobPetalsMode = savedJacob ? (IVGJacobPetalsMode)[savedJacob integerValue] : IVGJacobPetalsAuto;
 
         _hapticGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
         [_hapticGenerator prepare];
@@ -145,6 +162,12 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
                             _shootClusterCenter.y - clusterRadius - dropSize - 20.0,
                             dropSize, dropSize);
 
+    // Radial Petals for Jacob & Esau (emerge up-left and up-right from RT)
+    CGPoint dropCenter = CGPointMake(CGRectGetMidX(_dropFrame), CGRectGetMidY(_dropFrame));
+    _petalRadius = 26.0;
+    _petalItemCenter = CGPointMake(dropCenter.x - 58.0, dropCenter.y - 46.0);
+    _petalCardCenter = CGPointMake(dropCenter.x + 58.0, dropCenter.y - 46.0);
+
     // Card / Pill (RB) - next to drop button
     _cardFrame = CGRectMake(w - rightMargin - btnSize - 10.0,
                             _dropFrame.origin.y + (dropSize - btnSize) * 0.5,
@@ -195,6 +218,102 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     [self setNeedsDisplay];
 }
 
+- (IVGJacobPetalsMode)jacobPetalsMode {
+    return _jacobPetalsMode;
+}
+
+- (void)setJacobPetalsMode:(IVGJacobPetalsMode)mode {
+    _jacobPetalsMode = mode;
+    [NSUserDefaults.standardUserDefaults setInteger:mode forKey:kIVGJacobPetalsDefaultsKey];
+    [self setNeedsDisplay];
+}
+
+- (CGFloat)controlsOpacity {
+    return _controlsOpacity;
+}
+
+- (void)setControlsOpacity:(CGFloat)opacity {
+    _controlsOpacity = MAX(0.05, MIN(1.0, opacity));
+    [NSUserDefaults.standardUserDefaults setDouble:_controlsOpacity forKey:kIVGOpacityDefaultsKey];
+    [self setNeedsDisplay];
+}
+
+static inline bool SafeReadMemory(uintptr_t address, void *buf, size_t size) {
+    if (!address || !buf || !size) return false;
+    vm_size_t copied = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(),
+                                         (vm_address_t)address,
+                                         size,
+                                         (vm_address_t)buf,
+                                         &copied);
+    return (kr == KERN_SUCCESS && copied == size);
+}
+
+static inline uintptr_t GetIsaacBaseAddress(void) {
+    static uintptr_t cachedBase = 0;
+    if (cachedBase) return cachedBase;
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; ++i) {
+        const mach_header *header = _dyld_get_image_header(i);
+        if (header && header->magic == MH_MAGIC_64 && header->filetype == MH_EXECUTE) {
+            cachedBase = (uintptr_t)header;
+            return cachedBase;
+        }
+    }
+    return 0;
+}
+
+static BOOL CheckIsJacobAndEsau(void) {
+    uintptr_t base = GetIsaacBaseAddress();
+    if (!base) return NO;
+
+    uintptr_t gamePtr = 0;
+    if (!SafeReadMemory(base + 0xac3b90, &gamePtr, sizeof(gamePtr)) || !gamePtr) return NO;
+
+    uintptr_t room = 0;
+    if (!SafeReadMemory(gamePtr + 0x21550, &room, sizeof(room)) || !room) return NO;
+
+    uintptr_t entitiesArrayPtr = 0;
+    int32_t count = 0;
+    if (!SafeReadMemory(room + 0x19C8, &entitiesArrayPtr, sizeof(entitiesArrayPtr)) || !entitiesArrayPtr) return NO;
+    if (!SafeReadMemory(room + 0x19D4, &count, sizeof(count)) || count <= 0 || count > 2048) return NO;
+
+    for (int32_t i = 0; i < count; ++i) {
+        uintptr_t entity = 0;
+        if (!SafeReadMemory(entitiesArrayPtr + (size_t)i * sizeof(uintptr_t), &entity, sizeof(entity)) || !entity) continue;
+
+        int32_t type = 0;
+        int32_t subType = 0;
+        if (!SafeReadMemory(entity + 0x38, &type, sizeof(type))) continue;
+        if (type != 1) continue; // ENTITY_PLAYER
+
+        if (SafeReadMemory(entity + 0x40, &subType, sizeof(subType))) {
+            // PlayerType: 19 = Jacob, 20 = Esau, 39 = Tainted Jacob
+            if (subType == 19 || subType == 20 || subType == 39) {
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+- (BOOL)isCurrentCharacterJacobAndEsau {
+    static BOOL cachedVal = NO;
+    static NSTimeInterval lastCheck = 0;
+    NSTimeInterval now = CACurrentMediaTime();
+    if (now - lastCheck > 0.8) {
+        lastCheck = now;
+        cachedVal = CheckIsJacobAndEsau();
+    }
+    return cachedVal;
+}
+
+- (BOOL)shouldShowJacobPetals {
+    if (self.jacobPetalsMode == IVGJacobPetalsDisabled) return NO;
+    if (self.jacobPetalsMode == IVGJacobPetalsAlways) return YES;
+    return [self isCurrentCharacterJacobAndEsau];
+}
+
 #pragma mark - Hit Testing
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
@@ -215,6 +334,15 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         CGRectContainsPoint(CGRectInset(_mapFrame, -6, -6), point) ||
         CGRectContainsPoint(CGRectInset(_pauseFrame, -6, -6), point)) {
         return self;
+    }
+
+    // Intercept Jacob petals when RT is held
+    if (_dropPressed && [self shouldShowJacobPetals]) {
+        CGFloat distItem = hypot(point.x - _petalItemCenter.x, point.y - _petalItemCenter.y);
+        CGFloat distCard = hypot(point.x - _petalCardCenter.x, point.y - _petalCardCenter.y);
+        if (distItem < 45.0 || distCard < 45.0) {
+            return self;
+        }
     }
 
     // Left stick zone (bottom-left area of screen)
@@ -246,6 +374,28 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
             continue;
         }
 
+        // 1b. Jacob & Esau petals (when RT is already held)
+        if (_dropPressed && [self shouldShowJacobPetals]) {
+            CGFloat distItem = hypot(p.x - _petalItemCenter.x, p.y - _petalItemCenter.y);
+            CGFloat distCard = hypot(p.x - _petalCardCenter.x, p.y - _petalCardCenter.y);
+            if (distItem <= 38.0 && !_petalItemTouch) {
+                _petalItemTouch = touch;
+                _petalItemActive = YES;
+                IVGSetButton(IVGButtonLeftTrigger, YES); // Esau Item
+                if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self setNeedsDisplay];
+                continue;
+            }
+            if (distCard <= 38.0 && !_petalCardTouch) {
+                _petalCardTouch = touch;
+                _petalCardActive = YES;
+                IVGSetButton(IVGButtonRightShoulder, YES); // Esau Card
+                if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self setNeedsDisplay];
+                continue;
+            }
+        }
+
         // 2. Action buttons
         if (CGRectContainsPoint(CGRectInset(_bombFrame, -6, -6), p) && !_bombTouch) {
             _bombTouch = touch;
@@ -274,6 +424,8 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
         if (CGRectContainsPoint(CGRectInset(_dropFrame, -8, -8), p) && !_dropTouch) {
             _dropTouch = touch;
             _dropPressed = YES;
+            _petalItemActive = NO;
+            _petalCardActive = NO;
             IVGSetButton(IVGButtonRightTrigger, YES);
             if (self.hapticsEnabled) [_hapticGenerator impactOccurred];
             [self setNeedsDisplay];
@@ -340,6 +492,26 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
                 [self updateShootStickForPoint:p];
             }
             [self setNeedsDisplay];
+        } else if (touch == _dropTouch && [self shouldShowJacobPetals]) {
+            CGFloat distItem = hypot(p.x - _petalItemCenter.x, p.y - _petalItemCenter.y);
+            CGFloat distCard = hypot(p.x - _petalCardCenter.x, p.y - _petalCardCenter.y);
+
+            // Hysteresis: enter at <= 38pt, exit at > 46pt
+            BOOL itemActive = _petalItemActive ? (distItem <= 46.0) : (distItem <= 38.0);
+            BOOL cardActive = _petalCardActive ? (distCard <= 46.0) : (distCard <= 38.0);
+
+            if (itemActive != _petalItemActive) {
+                _petalItemActive = itemActive;
+                IVGSetButton(IVGButtonLeftTrigger, itemActive);
+                if (itemActive && self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self setNeedsDisplay];
+            }
+            if (cardActive != _petalCardActive) {
+                _petalCardActive = cardActive;
+                IVGSetButton(IVGButtonRightShoulder, cardActive);
+                if (cardActive && self.hapticsEnabled) [_hapticGenerator impactOccurred];
+                [self setNeedsDisplay];
+            }
         }
     }
 }
@@ -376,9 +548,27 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
             _cardPressed = NO;
             IVGSetButton(IVGButtonRightShoulder, NO);
             [self setNeedsDisplay];
+        } else if (touch == _petalItemTouch) {
+            _petalItemTouch = nil;
+            _petalItemActive = NO;
+            IVGSetButton(IVGButtonLeftTrigger, NO);
+            [self setNeedsDisplay];
+        } else if (touch == _petalCardTouch) {
+            _petalCardTouch = nil;
+            _petalCardActive = NO;
+            IVGSetButton(IVGButtonRightShoulder, NO);
+            [self setNeedsDisplay];
         } else if (touch == _dropTouch) {
             _dropTouch = nil;
             _dropPressed = NO;
+            if (_petalItemActive && !_petalItemTouch) {
+                _petalItemActive = NO;
+                IVGSetButton(IVGButtonLeftTrigger, NO);
+            }
+            if (_petalCardActive && !_petalCardTouch) {
+                _petalCardActive = NO;
+                IVGSetButton(IVGButtonRightShoulder, NO);
+            }
             IVGSetButton(IVGButtonRightTrigger, NO);
             [self setNeedsDisplay];
         } else if (touch == _mapTouch) {
@@ -585,16 +775,21 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
     [self drawRoundButton:_dropFrame symbol:@"⏬" active:_dropPressed alpha:alpha inContext:ctx];
     [self drawRoundButton:_mapFrame symbol:@"🗺" active:_mapPressed alpha:alpha inContext:ctx];
     [self drawRoundButton:_pauseFrame symbol:@"⏸" active:_pausePressed alpha:alpha inContext:ctx];
+
+    // Jacob & Esau Quick Petals (when holding RT)
+    if (_dropPressed && [self shouldShowJacobPetals]) {
+        [self drawJacobPetalsInContext:ctx alpha:alpha];
+    }
 }
 
 - (void)drawDirectionButton:(CGPoint)center radius:(CGFloat)radius symbol:(NSString *)symbol active:(BOOL)active alpha:(CGFloat)alpha inContext:(CGContextRef)ctx {
     CGRect rect = CGRectMake(center.x - radius, center.y - radius, radius * 2.0, radius * 2.0);
     UIColor *fill = active
         ? [UIColor colorWithRed:1.0 green:0.25 blue:0.25 alpha:0.85]
-        : [UIColor colorWithWhite:0.0 alpha:alpha * 0.7];
+        : [UIColor colorWithWhite:0.0 alpha:alpha * 0.45];
     UIColor *stroke = active
         ? UIColor.whiteColor
-        : [UIColor colorWithWhite:1.0 alpha:alpha * 0.75];
+        : [UIColor colorWithWhite:1.0 alpha:MAX(alpha * 0.7, 0.22)];
 
     CGContextSetFillColorWithColor(ctx, fill.CGColor);
     CGContextSetStrokeColorWithColor(ctx, stroke.CGColor);
@@ -604,7 +799,7 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 
     NSDictionary *attrs = @{
         NSFontAttributeName: [UIFont systemFontOfSize:20.0 weight:UIFontWeightBold],
-        NSForegroundColorAttributeName: UIColor.whiteColor
+        NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:active ? 1.0 : MAX(alpha * 0.9, 0.35)]
     };
     CGSize strSize = [symbol sizeWithAttributes:attrs];
     CGPoint textPoint = CGPointMake(center.x - strSize.width * 0.5, center.y - strSize.height * 0.5);
@@ -614,10 +809,10 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 - (void)drawRoundButton:(CGRect)rect symbol:(NSString *)symbol active:(BOOL)active alpha:(CGFloat)alpha inContext:(CGContextRef)ctx {
     UIColor *fill = active
         ? [UIColor colorWithRed:0.2 green:0.7 blue:1.0 alpha:0.85]
-        : [UIColor colorWithWhite:0.0 alpha:alpha * 0.65];
+        : [UIColor colorWithWhite:0.0 alpha:alpha * 0.45];
     UIColor *stroke = active
         ? UIColor.whiteColor
-        : [UIColor colorWithWhite:1.0 alpha:alpha * 0.65];
+        : [UIColor colorWithWhite:1.0 alpha:MAX(alpha * 0.7, 0.22)];
 
     CGContextSetFillColorWithColor(ctx, fill.CGColor);
     CGContextSetStrokeColorWithColor(ctx, stroke.CGColor);
@@ -630,12 +825,91 @@ static NSString *const kIVGHapticsDefaultsKey = @"IsaacTouchHapticsEnabled";
 
     NSDictionary *attrs = @{
         NSFontAttributeName: [UIFont systemFontOfSize:fontSize],
-        NSForegroundColorAttributeName: UIColor.whiteColor
+        NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:active ? 1.0 : MAX(alpha * 0.9, 0.35)]
     };
     CGSize strSize = [symbol sizeWithAttributes:attrs];
     CGPoint textPoint = CGPointMake(CGRectGetMidX(rect) - strSize.width * 0.5,
                                     CGRectGetMidY(rect) - strSize.height * 0.5);
     [symbol drawAtPoint:textPoint withAttributes:attrs];
+}
+
+- (void)drawJacobPetalsInContext:(CGContextRef)ctx alpha:(CGFloat)alpha {
+    CGPoint dropCenter = CGPointMake(CGRectGetMidX(_dropFrame), CGRectGetMidY(_dropFrame));
+
+    // Connecting dashed guide lines from RT to petals
+    CGContextSaveGState(ctx);
+    CGFloat dashPattern[] = { 4.0, 4.0 };
+    CGContextSetLineDash(ctx, 0.0, dashPattern, 2);
+    CGContextSetLineWidth(ctx, 2.0);
+    CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithRed:1.0 green:0.6 blue:0.4 alpha:MAX(alpha * 0.7, 0.35)].CGColor);
+
+    // Left connecting line
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, dropCenter.x, dropCenter.y);
+    CGContextAddLineToPoint(ctx, _petalItemCenter.x, _petalItemCenter.y);
+    CGContextStrokePath(ctx);
+
+    // Right connecting line
+    CGContextBeginPath(ctx);
+    CGContextMoveToPoint(ctx, dropCenter.x, dropCenter.y);
+    CGContextAddLineToPoint(ctx, _petalCardCenter.x, _petalCardCenter.y);
+    CGContextStrokePath(ctx);
+    CGContextRestoreGState(ctx);
+
+    // Petal 1: Esau Item (Left Petal)
+    CGRect itemRect = CGRectMake(_petalItemCenter.x - _petalRadius, _petalItemCenter.y - _petalRadius, _petalRadius * 2.0, _petalRadius * 2.0);
+    UIColor *itemFill = _petalItemActive
+        ? [UIColor colorWithRed:1.0 green:0.75 blue:0.1 alpha:0.9]
+        : [UIColor colorWithRed:0.7 green:0.25 blue:0.15 alpha:MAX(alpha * 0.85, 0.5)];
+    UIColor *itemStroke = _petalItemActive
+        ? UIColor.whiteColor
+        : [UIColor colorWithRed:1.0 green:0.6 blue:0.3 alpha:MAX(alpha, 0.7)];
+
+    CGContextSetFillColorWithColor(ctx, itemFill.CGColor);
+    CGContextSetStrokeColorWithColor(ctx, itemStroke.CGColor);
+    CGContextSetLineWidth(ctx, _petalItemActive ? 2.5 : 1.5);
+    CGContextFillEllipseInRect(ctx, itemRect);
+    CGContextStrokeEllipseInRect(ctx, itemRect);
+
+    NSDictionary *itemAttrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:17.0 weight:UIFontWeightBold],
+        NSForegroundColorAttributeName: UIColor.whiteColor
+    };
+    NSString *itemSym = @"⚡";
+    CGSize itemSymSize = [itemSym sizeWithAttributes:itemAttrs];
+    [itemSym drawAtPoint:CGPointMake(_petalItemCenter.x - itemSymSize.width * 0.5, _petalItemCenter.y - itemSymSize.height * 0.5) withAttributes:itemAttrs];
+
+    // Petal 2: Esau Pill / Card (Right Petal)
+    CGRect cardRect = CGRectMake(_petalCardCenter.x - _petalRadius, _petalCardCenter.y - _petalRadius, _petalRadius * 2.0, _petalRadius * 2.0);
+    UIColor *cardFill = _petalCardActive
+        ? [UIColor colorWithRed:0.2 green:0.8 blue:1.0 alpha:0.9]
+        : [UIColor colorWithRed:0.7 green:0.25 blue:0.15 alpha:MAX(alpha * 0.85, 0.5)];
+    UIColor *cardStroke = _petalCardActive
+        ? UIColor.whiteColor
+        : [UIColor colorWithRed:1.0 green:0.6 blue:0.3 alpha:MAX(alpha, 0.7)];
+
+    CGContextSetFillColorWithColor(ctx, cardFill.CGColor);
+    CGContextSetStrokeColorWithColor(ctx, cardStroke.CGColor);
+    CGContextSetLineWidth(ctx, _petalCardActive ? 2.5 : 1.5);
+    CGContextFillEllipseInRect(ctx, cardRect);
+    CGContextStrokeEllipseInRect(ctx, cardRect);
+
+    NSDictionary *cardAttrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:17.0 weight:UIFontWeightBold],
+        NSForegroundColorAttributeName: UIColor.whiteColor
+    };
+    NSString *cardSym = @"💊";
+    CGSize cardSymSize = [cardSym sizeWithAttributes:cardAttrs];
+    [cardSym drawAtPoint:CGPointMake(_petalCardCenter.x - cardSymSize.width * 0.5, _petalCardCenter.y - cardSymSize.height * 0.5) withAttributes:cardAttrs];
+
+    // Label above RT: "ESAU ACTIONS"
+    NSDictionary *labelAttrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:10.0 weight:UIFontWeightBold],
+        NSForegroundColorAttributeName: [UIColor colorWithRed:1.0 green:0.7 blue:0.5 alpha:MAX(alpha * 0.9, 0.6)]
+    };
+    NSString *label = @"ESAU ACTIONS";
+    CGSize labelSize = [label sizeWithAttributes:labelAttrs];
+    [label drawAtPoint:CGPointMake(dropCenter.x - labelSize.width * 0.5, _petalItemCenter.y - labelSize.height - 4.0) withAttributes:labelAttrs];
 }
 
 - (void)drawModeToggleButtonInContext:(CGContextRef)ctx alpha:(CGFloat)alpha {
