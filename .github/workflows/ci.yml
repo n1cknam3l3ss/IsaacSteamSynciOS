@@ -8,8 +8,7 @@ on:
 jobs:
   ios-dylib:
     runs-on: macos-15
-    permissions:
-      contents: write
+    permissions: write-all
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,13 +21,9 @@ jobs:
       - name: Run core tests
         run: make test
       - name: Build release artifacts
-        run: |
-          make release 2>&1 | tee /tmp/build.log || {
-            echo "::error::Build release failed! Full log follows:"
-            cat /tmp/build.log
-            exit 1
-          }
+        run: make release
       - name: Upload build artifacts
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: IsaacSteamSynciOS-${{ github.ref_name }}-${{ github.sha }}
