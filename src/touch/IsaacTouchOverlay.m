@@ -1,11 +1,9 @@
 #import "IsaacTouchOverlay.h"
 #import "IsaacVirtualGamepad.h"
 #import <AudioToolbox/AudioToolbox.h>
-#import <mach/mach.h>
-#import <mach-o/dyld.h>
-#import <mach-o/loader.h>
 
 extern bool ICSGameMenuIsActive(void);
+extern bool ICSIsCharacterJacobAndEsau(void);
 
 static NSString *const kIVGShootModeDefaultsKey = @"IsaacTouchShootMode";
 static NSString *const kIVGOpacityDefaultsKey = @"IsaacTouchOpacity";
@@ -238,72 +236,13 @@ static NSString *const kIVGJacobPetalsDefaultsKey = @"IsaacTouchJacobPetalsMode"
     [self setNeedsDisplay];
 }
 
-static inline bool SafeReadMemory(uintptr_t address, void *buf, size_t size) {
-    if (!address || !buf || !size) return false;
-    vm_size_t copied = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(),
-                                         (vm_address_t)address,
-                                         size,
-                                         (vm_address_t)buf,
-                                         &copied);
-    return (kr == KERN_SUCCESS && copied == size);
-}
-
-static inline uintptr_t GetIsaacBaseAddress(void) {
-    static uintptr_t cachedBase = 0;
-    if (cachedBase) return cachedBase;
-    uint32_t count = _dyld_image_count();
-    for (uint32_t i = 0; i < count; ++i) {
-        const mach_header *header = _dyld_get_image_header(i);
-        if (header && header->magic == MH_MAGIC_64 && header->filetype == MH_EXECUTE) {
-            cachedBase = (uintptr_t)header;
-            return cachedBase;
-        }
-    }
-    return 0;
-}
-
-static BOOL CheckIsJacobAndEsau(void) {
-    uintptr_t base = GetIsaacBaseAddress();
-    if (!base) return NO;
-
-    uintptr_t gamePtr = 0;
-    if (!SafeReadMemory(base + 0xac3b90, &gamePtr, sizeof(gamePtr)) || !gamePtr) return NO;
-
-    uintptr_t room = 0;
-    if (!SafeReadMemory(gamePtr + 0x21550, &room, sizeof(room)) || !room) return NO;
-
-    uintptr_t entitiesArrayPtr = 0;
-    int32_t count = 0;
-    if (!SafeReadMemory(room + 0x19C8, &entitiesArrayPtr, sizeof(entitiesArrayPtr)) || !entitiesArrayPtr) return NO;
-    if (!SafeReadMemory(room + 0x19D4, &count, sizeof(count)) || count <= 0 || count > 2048) return NO;
-
-    for (int32_t i = 0; i < count; ++i) {
-        uintptr_t entity = 0;
-        if (!SafeReadMemory(entitiesArrayPtr + (size_t)i * sizeof(uintptr_t), &entity, sizeof(entity)) || !entity) continue;
-
-        int32_t type = 0;
-        int32_t subType = 0;
-        if (!SafeReadMemory(entity + 0x38, &type, sizeof(type))) continue;
-        if (type != 1) continue; // ENTITY_PLAYER
-
-        if (SafeReadMemory(entity + 0x40, &subType, sizeof(subType))) {
-            // PlayerType: 19 = Jacob, 20 = Esau, 39 = Tainted Jacob
-            if (subType == 19 || subType == 20 || subType == 39) {
-                return YES;
-            }
-        }
-    }
-    return NO;
-}
-
 - (BOOL)isCurrentCharacterJacobAndEsau {
     static BOOL cachedVal = NO;
     static NSTimeInterval lastCheck = 0;
     NSTimeInterval now = CACurrentMediaTime();
     if (now - lastCheck > 0.8) {
         lastCheck = now;
-        cachedVal = CheckIsJacobAndEsau();
+        cachedVal = ICSIsCharacterJacobAndEsau();
     }
     return cachedVal;
 }

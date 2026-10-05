@@ -421,6 +421,37 @@ extern "C" bool ICSGameMenuIsActive(void) {
     return gGameState.load() == 0;
 }
 
+extern "C" bool ICSIsCharacterJacobAndEsau(void) {
+    vm_address_t game = 0;
+    if (!ReadGameObjectAddress(game)) return false;
+
+    uintptr_t room = 0;
+    if (!ReadOwnTaskMemory(game + 0x21550, &room, sizeof(room)) || !room) return false;
+
+    uintptr_t entitiesArrayPtr = 0;
+    int32_t count = 0;
+    if (!ReadOwnTaskMemory(static_cast<vm_address_t>(room + 0x19C8), &entitiesArrayPtr, sizeof(entitiesArrayPtr)) || !entitiesArrayPtr) return false;
+    if (!ReadOwnTaskMemory(static_cast<vm_address_t>(room + 0x19D4), &count, sizeof(count)) || count <= 0 || count > 2048) return false;
+
+    for (int32_t i = 0; i < count; ++i) {
+        uintptr_t entity = 0;
+        if (!ReadOwnTaskMemory(static_cast<vm_address_t>(entitiesArrayPtr + static_cast<size_t>(i) * sizeof(uintptr_t)), &entity, sizeof(entity)) || !entity) continue;
+
+        int32_t type = 0;
+        int32_t subType = 0;
+        if (!ReadOwnTaskMemory(static_cast<vm_address_t>(entity + 0x38), &type, sizeof(type))) continue;
+        if (type != 1) continue; // ENTITY_PLAYER
+
+        if (ReadOwnTaskMemory(static_cast<vm_address_t>(entity + 0x40), &subType, sizeof(subType))) {
+            // PlayerType: 19 = Jacob, 20 = Esau, 39 = Tainted Jacob
+            if (subType == 19 || subType == 20 || subType == 39) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 extern "C" void ICSInstallGameStateDetector(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{

@@ -34,9 +34,11 @@ jobs:
             dist/SHA256SUMS
           retention-days: 14
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.2.3-touchmod
+          name: "IsaacSteamSynciOS v1.2.3-touchmod"
           files: |
             dist/IsaacSteamSynciOS.dylib
             dist/IsaacSteamSynciOS-rootless.deb

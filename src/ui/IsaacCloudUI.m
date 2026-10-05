@@ -139,6 +139,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
 @property(nonatomic) BOOL qrPresented;
 @property(nonatomic) BOOL guardPromptPresented;
 @property(nonatomic) UISlider *opacitySlider;
+- (void)opacitySliderChanged:(UISlider *)slider;
 @end
 
 @implementation ICSPanelViewController
@@ -466,7 +467,7 @@ static NSDictionary *ICSFindSlot(NSArray *items, NSUInteger slot) {
         } else if (indexPath.row == 1) {
             [overlay toggleShootMode];
         } else if (indexPath.row == 3) {
-            IVGJacobPetalsMode nextMode = (overlay.jacobPetalsMode + 1) % 3;
+            IVGJacobPetalsMode nextMode = (IVGJacobPetalsMode)((overlay.jacobPetalsMode + 1) % 3);
             overlay.jacobPetalsMode = nextMode;
         } else if (indexPath.row == 4) {
             BOOL next = !overlay.hapticsEnabled;
