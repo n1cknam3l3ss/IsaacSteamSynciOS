@@ -26,7 +26,7 @@ jobs:
           make release 2>&1 | tee /tmp/build.log
           BUILD_STATUS=${PIPESTATUS[0]}
           if [ $BUILD_STATUS -ne 0 ]; then
-            tail -n 25 /tmp/build.log | while IFS= read -r line; do
+            grep -E -C 2 "error:|warning:|fatal" /tmp/build.log | head -n 30 | while IFS= read -r line; do
               echo "::error::$line"
             done
             exit $BUILD_STATUS
