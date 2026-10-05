@@ -25,11 +25,12 @@ jobs:
           set +e
           make release 2>&1 | tee /tmp/build.log
           BUILD_STATUS=${PIPESTATUS[0]}
-          echo "### Make Release Output (Exit Code: $BUILD_STATUS)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 100 /tmp/build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          exit $BUILD_STATUS
+          if [ $BUILD_STATUS -ne 0 ]; then
+            tail -n 25 /tmp/build.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit $BUILD_STATUS
+          fi
       - name: Upload build artifacts
         continue-on-error: true
         uses: actions/upload-artifact@v4
